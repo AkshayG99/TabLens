@@ -44,7 +44,7 @@ USED_COLUMNS = [
 def load_loans() -> pd.DataFrame:
     df = pd.read_csv(RAW_DIR / "accepted_2007_to_2018q4.csv", usecols=USED_COLUMNS)
 
-    terminal_statuses = ["Fully Paid", "Charged Off", "Default"]
+    terminal_statuses = ["Fully Paid", "Charged Off", "Default", "Rejected"]
     df = df[df["loan_status"].isin(terminal_statuses)].copy()
 
     df["target"] = (df["loan_status"] == "Fully Paid").astype(int)
@@ -62,7 +62,7 @@ def load_loans() -> pd.DataFrame:
     df["term"] = pd.to_numeric(df["term"], errors="coerce")
 
     df.rename(columns=COL_RENAME, inplace=True)
-    df.dropna(subset=["emp_length", "term", "debt_to_income"], inplace=True)
+    df.dropna(subset=["emp_length", "debt_to_income"], inplace=True)
 
     return df
 
@@ -108,10 +108,18 @@ def serialize_loans(df: pd.DataFrame) -> pd.DataFrame:
         "total_credit_limit", "account_never_delinq_percent", "loan_purpose",
         "loan_amount", "term", "interest_rate", "grade",
     ]
-    texts = df.apply(
-        lambda row: LOAN_TEMPLATE.format(**{k: row[k] for k in fields}),
-        axis=1,
-    )
+
+    def _row_to_text(row):
+        vals = {}
+        for k in fields:
+            v = row[k]
+            if pd.isna(v):
+                vals[k] = "Unknown"
+            else:
+                vals[k] = v
+        return LOAN_TEMPLATE.format(**vals)
+
+    texts = df.apply(_row_to_text, axis=1)
     return pd.DataFrame({"text": texts, "target": df["target"].values})
 
 
