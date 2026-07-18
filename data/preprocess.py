@@ -18,12 +18,52 @@ def load_german_credit() -> pd.DataFrame:
     return df
 
 
+COL_RENAME = {
+    "addr_state": "state",
+    "home_ownership": "homeownership",
+    "annual_inc": "annual_income",
+    "verification_status": "verified_income",
+    "dti": "debt_to_income",
+    "delinq_2yrs": "delinq_2y",
+    "total_acc": "total_credit_lines",
+    "tot_hi_cred_lim": "total_credit_limit",
+    "pct_tl_nvr_dlq": "account_never_delinq_percent",
+    "purpose": "loan_purpose",
+    "loan_amnt": "loan_amount",
+    "int_rate": "interest_rate",
+}
+
+USED_COLUMNS = [
+    "loan_status", "emp_title", "emp_length", "addr_state", "home_ownership",
+    "annual_inc", "verification_status", "dti", "delinq_2yrs", "total_acc",
+    "tot_hi_cred_lim", "pct_tl_nvr_dlq", "purpose", "loan_amnt", "term",
+    "int_rate", "grade",
+]
+
+
 def load_loans() -> pd.DataFrame:
-    df = pd.read_csv(RAW_DIR / "loans_full_schema.csv")
+    df = pd.read_csv(RAW_DIR / "accepted_2007_to_2018q4.csv", usecols=USED_COLUMNS)
+
     terminal_statuses = ["Fully Paid", "Charged Off", "Default"]
     df = df[df["loan_status"].isin(terminal_statuses)].copy()
+
     df["target"] = (df["loan_status"] == "Fully Paid").astype(int)
     df.drop(columns=["loan_status"], inplace=True)
+
+    df["emp_length"] = (
+        df["emp_length"]
+        .str.replace(r"\+?\s*years?", "", regex=True)
+        .str.replace(r"<\s*", "", regex=True)
+        .str.strip()
+    )
+    df["emp_length"] = pd.to_numeric(df["emp_length"], errors="coerce")
+
+    df["term"] = df["term"].str.strip().str.replace(r"\s*months", "", regex=True)
+    df["term"] = pd.to_numeric(df["term"], errors="coerce")
+
+    df.rename(columns=COL_RENAME, inplace=True)
+    df.dropna(subset=["emp_length", "term", "debt_to_income"], inplace=True)
+
     return df
 
 
