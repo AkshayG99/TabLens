@@ -5,7 +5,6 @@ __pycache__/
 data/raw/accepted_*.csv.gz
 data/raw/rejected_*.csv
 data/raw/rejected_*.csv.gz
-data/raw/loans_full_schema.csv
 data/processed/
 data/reasoning/
 *.egg-info/
