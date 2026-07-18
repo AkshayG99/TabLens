@@ -2,7 +2,6 @@
 __pycache__/
 *.pyc
 .env
-data/raw/accepted_*.csv
 data/raw/accepted_*.csv.gz
 data/raw/rejected_*.csv
 data/raw/rejected_*.csv.gz
