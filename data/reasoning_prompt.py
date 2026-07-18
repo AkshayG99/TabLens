@@ -36,7 +36,7 @@ DATASET_INSTRUCTIONS = {
     "loans": LOAN_REASONING_INSTRUCTIONS,
 }
 
-MODEL_NAME = "gemma-4-31b-it"
+MODEL_NAME = "gemma-4-26b-a4b-it"
 
 
 def build_prompt(text: str, dataset: str):
