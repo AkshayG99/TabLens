@@ -6,10 +6,11 @@ from pathlib import Path
 from splits import stratified_split, save_splits
 
 DATA_DIR = Path(__file__).parent
+RAW_DIR = DATA_DIR / "raw"
 
 
 def load_german_credit() -> pd.DataFrame:
-    df = pd.read_csv(DATA_DIR / "german_credit_risk.csv", index_col=0, keep_default_na=False)
+    df = pd.read_csv(RAW_DIR / "german_credit_risk.csv", index_col=0, keep_default_na=False)
     df["Saving accounts"] = df["Saving accounts"].replace({"NA": "Unknown", "": "Unknown"})
     df["Checking account"] = df["Checking account"].replace({"NA": "Unknown", "": "Unknown"})
     df["target"] = (df["Risk"] == "good").astype(int)
@@ -18,7 +19,7 @@ def load_german_credit() -> pd.DataFrame:
 
 
 def load_loans() -> pd.DataFrame:
-    df = pd.read_csv(DATA_DIR / "loans_full_schema.csv")
+    df = pd.read_csv(RAW_DIR / "loans_full_schema.csv")
     terminal_statuses = ["Fully Paid", "Charged Off", "Default"]
     df = df[df["loan_status"].isin(terminal_statuses)].copy()
     df["target"] = (df["loan_status"] == "Fully Paid").astype(int)
