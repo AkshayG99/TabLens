@@ -9,3 +9,4 @@ data/reasoning/
 *.egg-info/
 dist/
 build/
+LLaMA-Factory/

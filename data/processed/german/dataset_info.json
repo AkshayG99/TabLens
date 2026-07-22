@@ -1,0 +1,9 @@
+{
+  "train_explanations": {
+    "file_name": "train_explanations.jsonl",
+    "columns": {
+      "prompt": "text",
+      "response": "explanation"
+    }
+  }
+}

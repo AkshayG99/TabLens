@@ -84,10 +84,10 @@ TabReason/
 ---
 
 ### Phase 3: Supervised Fine-Tuning (SFT)
-**Objective:** Fine-tune `Qwen2.5-7B-Instruct` on the generated CoT reasoning data.
+**Objective:** Fine-tune `Qwen/Qwen3.5-9B-Instruct` on the generated CoT reasoning data.
 
 **Tasks for `configs/sft_config.yaml` and `scripts/run_sft.sh`:**
-1. **Model Specs:** Base model must be `Qwen/Qwen2.5-7B-Instruct`.
+1. **Model Specs:** Base model must be `unsloth/Qwen3.5-9B-Instruct`.
 2. **Methodology:** Use QLoRA.
    - Quantization: 4-bit.
    - LoRA Config: `rank = 16`, `lora_alpha = 32`, target modules = all linear.
