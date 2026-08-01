@@ -18,6 +18,45 @@ def load_german_credit() -> pd.DataFrame:
     return df
 
 
+# https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data
+PROPERTY_CLEANUP = {
+    "if not A121/A122 : car or other, not in attribute 6": "car or other property",
+    "if not A121 : building society savings agreement/ life insurance": "building society savings agreement / life insurance",
+}
+
+CHECKING_ACCOUNT_CLEANUP = {
+    "... < 0 DM": "less than 0 DM",
+    "0 <= ... < 200 DM": "0 to 200 DM",
+    "... >= 200 DM / salary assignments for at least 1 year": "200 DM or more, or salary assignments for at least 1 year",
+}
+
+SAVINGS_ACCOUNT_CLEANUP = {
+    "... < 100 DM": "less than 100 DM",
+    "100 <= ... < 500 DM": "100 to 500 DM",
+    "500 <= ... < 1000 DM": "500 to 1000 DM",
+    ".. >= 1000 DM": "1000 DM or more",
+}
+
+EMPLOYMENT_SINCE_CLEANUP = {
+    "... < 1 year": "less than 1 year",
+    "1 <= ... < 4 years": "1 to 4 years",
+    "4 <= ... < 7 years": "4 to 7 years",
+    ".. >= 7 years": "7 years or more",
+}
+
+
+def load_german_credit_v2() -> pd.DataFrame:
+    # german_credit_v2 is full version of UCI German Credit dataset
+    df = pd.read_csv(RAW_DIR / "german_credit_uci.csv")
+    df["target"] = (df["risk"] == "good").astype(int)
+    df.drop(columns=["risk"], inplace=True)
+    df["property"] = df["property"].replace(PROPERTY_CLEANUP)
+    df["checking_account_status"] = df["checking_account_status"].replace(CHECKING_ACCOUNT_CLEANUP)
+    df["savings_account_bonds"] = df["savings_account_bonds"].replace(SAVINGS_ACCOUNT_CLEANUP)
+    df["present_employment_since"] = df["present_employment_since"].replace(EMPLOYMENT_SINCE_CLEANUP)
+    return df
+
+
 COL_RENAME = {
     "addr_state": "state",
     "home_ownership": "homeownership",
@@ -84,6 +123,20 @@ GERMAN_TEMPLATE = (
     "They requested a credit amount of {Credit amount} over {Duration} months for {Purpose}."
 )
 
+GERMAN_V2_TEMPLATE = (
+    "The applicant is {personal_status_sex}, aged {age}, foreign worker: {foreign_worker}. "
+    "They work as {job} and have been employed since {present_employment_since}. "
+    "They live in {housing} housing, at their present residence for {present_residence_since} years, "
+    "with other installment plans: {other_installment_plans}. "
+    "Their property: {property}. Other debtors/guarantors: {other_debtors_guarantors}. "
+    "They have {existing_credits_at_bank} existing credit(s) at this bank and are liable for "
+    "maintenance of {liable_for_maintenance} dependent(s). Telephone: {telephone}. "
+    "Their checking account status is {checking_account_status} and their savings account/bonds "
+    "status is {savings_account_bonds}. Their credit history: {credit_history}. "
+    "They requested a credit amount of {credit_amount} over {duration} months for {purpose}, "
+    "with an installment rate of {installment_rate_pct_disposable_income}% of disposable income."
+)
+
 LOAN_TEMPLATE = (
     "The applicant works as {emp_title} for {emp_length} years in {state}, "
     "with {homeownership} housing and an annual income of {annual_income}. "
@@ -98,6 +151,11 @@ LOAN_TEMPLATE = (
 
 def serialize_german(df: pd.DataFrame) -> pd.DataFrame:
     texts = df.apply(lambda row: GERMAN_TEMPLATE.format(**row), axis=1)
+    return pd.DataFrame({"text": texts, "target": df["target"].values})
+
+
+def serialize_german_v2(df: pd.DataFrame) -> pd.DataFrame:
+    texts = df.apply(lambda row: GERMAN_V2_TEMPLATE.format(**row), axis=1)
     return pd.DataFrame({"text": texts, "target": df["target"].values})
 
 
@@ -128,6 +186,10 @@ def main():
     german = normalize_numerics(german)
     german_text = serialize_german(german)
     save_splits("german", *stratified_split(german_text))
+
+    german_v2 = load_german_credit_v2()
+    german_v2_text = serialize_german_v2(german_v2)
+    save_splits("german_v2", *stratified_split(german_v2_text))
 
     loans = load_loans()
     loans = normalize_numerics(loans)
