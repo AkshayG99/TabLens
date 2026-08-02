@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -19,8 +18,23 @@ from data.reasoning_prompt import parse_response, SYSTEM_PROMPT, DATASET_INSTRUC
 DEFAULT_BASE_MODEL = "unsloth/Qwen3.5-9B"
 DEFAULT_ADAPTER_PATH = "outputs/qwen3.5-9b-sft"
 DEFAULT_DATASET = "german"
-DEFAULT_TEST_FILE = "data/processed/german/test.jsonl"
+DEFAULT_TEST_FILE = "data/processed/german_v2/test.jsonl"
 RESULTS_DIR = Path("eval/results")
+
+GERMAN_V2_INSTRUCTION = (
+    "You are an expert credit risk analyst. Analyze the following German Credit applicant "
+    "profile and provide a detailed, step-by-step Chain-of-Thought (COT) explanation of why "
+    "this applicant should be accepted or rejected."
+)
+
+_REJECT_BOLD = re.compile(r"\*\*REJECTED?\*\*", re.IGNORECASE)
+_ACCEPT_BOLD = re.compile(r"\*\*ACCEPTED?\*\*", re.IGNORECASE)
+_REJECT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*REJECT", re.IGNORECASE)
+_ACCEPT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*ACCEPT", re.IGNORECASE)
+_REJECT_TO = re.compile(r"\bdecisions?\s+to\s+REJECT", re.IGNORECASE)
+_ACCEPT_TO = re.compile(r"\bdecisions?\s+to\s+ACCEPT", re.IGNORECASE)
+_REJECT_WORD = re.compile(r"\b(?:reject|rejects|rejected|rejecting)\b", re.IGNORECASE)
+_ACCEPT_WORD = re.compile(r"\b(?:accept|accepts|accepted|accepting)\b", re.IGNORECASE)
 
 
 def load_test_data(path: str, limit: int | None = None) -> list[dict]:
@@ -37,6 +51,8 @@ def load_test_data(path: str, limit: int | None = None) -> list[dict]:
 
 
 def build_inference_prompt(text: str, dataset: str) -> str:
+    if dataset == "german":
+        return f"{GERMAN_V2_INSTRUCTION}\n\n{text}"
     instruction = DATASET_INSTRUCTIONS[dataset].format(text=text)
     return f"[System] {SYSTEM_PROMPT}\n\n{instruction}"
 
@@ -68,7 +84,7 @@ def load_model(base_model: str, adapter_path: str):
 
 
 def generate_prediction(
-    model, tokenizer, prompt: str, max_new_tokens: int = 512, temperature: float = 0.1
+    model, tokenizer, prompt: str, max_new_tokens: int = 1024, temperature: float = 0.1
 ) -> str:
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(
@@ -91,13 +107,44 @@ def generate_prediction(
 
 
 def extract_label(response: str) -> int | None:
-    """Extract binary label from model response. Returns None if unparseable."""
+    """Extract binary label (1=accept, 0=reject) from the model's reasoning text."""
+    # 1. Explicit bold verdict markers (highest confidence)
+    if _REJECT_BOLD.search(response):
+        return 0
+    if _ACCEPT_BOLD.search(response):
+        return 1
+
+    # 2. "Decision: ..." lines
+    if _REJECT_DECISION.search(response):
+        return 0
+    if _ACCEPT_DECISION.search(response):
+        return 1
+
+    # 3. "decision to ACCEPT/REJECT" phrasing in the opening statement
+    intro = response[:700]
+    if _REJECT_TO.search(intro):
+        return 0
+    if _ACCEPT_TO.search(intro):
+        return 1
+
+    # 4. Decision verb in the opening statement
+    if _REJECT_WORD.search(intro):
+        return 0
+    if _ACCEPT_WORD.search(intro):
+        return 1
+
+    # 5. Decision verb anywhere in the text
+    if _REJECT_WORD.search(response):
+        return 0
+    if _ACCEPT_WORD.search(response):
+        return 1
+
+    # 6. Fallback to legacy good/bad language
     parsed = parse_response(response)
     if parsed is not None:
         _, answer = parsed
         return 1 if answer == "good" else 0
-
-    lower = response.lower().strip()
+    lower = response.lower()
     if "good" in lower:
         return 1
     if "bad" in lower:
@@ -108,7 +155,6 @@ def extract_label(response: str) -> int | None:
 def run_evaluation(args):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load test data
     print(f"Loading test data from {args.test_file}...")
     samples = load_test_data(args.test_file, args.limit)
     print(f"Loaded {len(samples)} test samples.")
@@ -117,7 +163,6 @@ def run_evaluation(args):
         print("No test samples found. Exiting.")
         sys.exit(1)
 
-    # Load model
     model, tokenizer = load_model(args.base_model, args.adapter_path)
 
     y_true = []
@@ -165,7 +210,6 @@ def run_evaluation(args):
     y_pred = np.array(y_pred)
     y_scores = np.array(y_scores)
 
-    # Compute metrics
     metrics = compute_all(y_true, y_pred, y_scores)
     metrics["parse_failures"] = parse_failures
     metrics["parse_failure_rate"] = parse_failures / len(samples)
@@ -173,7 +217,6 @@ def run_evaluation(args):
     metrics["elapsed_seconds"] = round(elapsed, 2)
     metrics["samples_per_second"] = round(len(samples) / elapsed, 4)
 
-    # Print results
     print(f"\n{'='*60}")
     print("EVALUATION RESULTS")
     print(f"{'='*60}")
@@ -191,7 +234,6 @@ def run_evaluation(args):
     cm = metrics["confusion_matrix"]
     print(f"Confusion Matrix: TN={cm[0][0]} FP={cm[0][1]} FN={cm[1][0]} TP={cm[1][1]}")
 
-    # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_path = RESULTS_DIR / f"eval_{args.dataset}_{timestamp}.json"
 
