@@ -3,6 +3,7 @@ import json
 import re
 import sys
 import time
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -78,13 +79,29 @@ def load_model(base_model: str, adapter_path: str):
     )
 
     print(f"Attaching LoRA adapter from {adapter_path}...")
-    model = PeftModel.from_pretrained(base, adapter_path)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model = PeftModel.from_pretrained(base, adapter_path)
     model.eval()
+
+    for w in caught:
+        if "missing adapter keys" in str(w.message):
+            missing = str(w.message).count("lora_A")
+            print(f"\n!!! WARNING: adapter did not fully attach ({missing} LoRA weights unmapped).")
+            print("!!! The model is running WITHOUT your fine-tune — results will be random.")
+            print("!!! Match transformers/peft to training versions (peft 0.18.1, transformers 5.8.0).")
+            break
+
     return model, tokenizer
 
 
 def generate_prediction(
-    model, tokenizer, prompt: str, max_new_tokens: int = 1024, temperature: float = 0.1
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int = 1400,
+    temperature: float = 0.1,
+    greedy: bool = False,
 ) -> str:
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(
@@ -96,8 +113,8 @@ def generate_prediction(
         outputs = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            do_sample=True,
+            do_sample=not greedy,
+            temperature=temperature if not greedy else None,
         )
 
     response = tokenizer.decode(
@@ -106,12 +123,19 @@ def generate_prediction(
     return response
 
 
+def _verdict(match: re.Match) -> int:
+    word = match.group(1).lower()
+    return 1 if word.startswith("accept") else 0
+
+
 def extract_label(response: str) -> int | None:
     """Extract binary label (1=accept, 0=reject) from the model's reasoning text."""
     # 1. Explicit bold verdict markers (highest confidence)
-    if _REJECT_BOLD.search(response):
+    m = _REJECT_BOLD.search(response)
+    if m:
         return 0
-    if _ACCEPT_BOLD.search(response):
+    m = _ACCEPT_BOLD.search(response)
+    if m:
         return 1
 
     # 2. "Decision: ..." lines
@@ -120,26 +144,36 @@ def extract_label(response: str) -> int | None:
     if _ACCEPT_DECISION.search(response):
         return 1
 
-    # 3. "decision to ACCEPT/REJECT" phrasing in the opening statement
+    # 3. Verdict in the conclusion tail ("Conclusion/Final Decision/Verdict/Outcome: X")
+    tail = response[-500:]
+    m = re.search(
+        r"\b(?:Conclusion|Final Decision|Verdict|Outcome)\s*:?\s*\**\s*(ACCEPTED?|REJECTED?)\b",
+        tail,
+        re.IGNORECASE,
+    )
+    if m:
+        return _verdict(m)
+
+    # 4. "decision to ACCEPT/REJECT" phrasing in the opening statement
     intro = response[:700]
     if _REJECT_TO.search(intro):
         return 0
     if _ACCEPT_TO.search(intro):
         return 1
 
-    # 4. Decision verb in the opening statement
+    # 5. Decision verb in the opening statement
     if _REJECT_WORD.search(intro):
         return 0
     if _ACCEPT_WORD.search(intro):
         return 1
 
-    # 5. Decision verb anywhere in the text
+    # 6. Decision verb anywhere in the text
     if _REJECT_WORD.search(response):
         return 0
     if _ACCEPT_WORD.search(response):
         return 1
 
-    # 6. Fallback to legacy good/bad language
+    # 7. Fallback to legacy good/bad language
     parsed = parse_response(response)
     if parsed is not None:
         _, answer = parsed
@@ -180,7 +214,7 @@ def run_evaluation(args):
 
         prompt = build_inference_prompt(text, args.dataset)
         response = generate_prediction(
-            model, tokenizer, prompt, temperature=args.temperature
+            model, tokenizer, prompt, temperature=args.temperature, greedy=args.greedy
         )
 
         pred = extract_label(response)
@@ -259,6 +293,9 @@ def main():
     parser.add_argument("--test-file", default=DEFAULT_TEST_FILE, help="Path to test JSONL")
     parser.add_argument("--limit", type=int, default=None, help="Max test samples to evaluate")
     parser.add_argument("--temperature", type=float, default=0.1, help="Generation temperature")
+    parser.add_argument(
+        "--greedy", action="store_true", help="Greedy decoding (deterministic, faster)"
+    )
     args = parser.parse_args()
     run_evaluation(args)
 
