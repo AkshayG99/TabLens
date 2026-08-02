@@ -59,7 +59,12 @@ def build_inference_prompt(text: str, dataset: str) -> str:
 
 
 def load_model(base_model: str, adapter_path: str):
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoModelForImageTextToText,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+    )
     from peft import PeftModel
 
     print(f"Loading tokenizer from {adapter_path}...")
@@ -71,12 +76,24 @@ def load_model(base_model: str, adapter_path: str):
         bnb_4bit_compute_dtype=torch.float16,
         bnb_4bit_quant_type="nf4",
     )
-    base = AutoModelForCausalLM.from_pretrained(
+    # unsloth/Qwen3.5-9B is a multimodal wrapper (Qwen3_5ForConditionalGeneration).
+    # Training targeted model.language_model.layers.*, so we must load the same
+    # wrapper or the LoRA weights won't map. Fall back to CausalLM if unavailable.
+    loader = AutoModelForImageTextToText if AutoModelForImageTextToText is not None else AutoModelForCausalLM
+    base = loader.from_pretrained(
         base_model,
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
     )
+    if not hasattr(base, "model") or not hasattr(base.model, "language_model"):
+        print("Wrapper lacks language_model; retrying with AutoModelForCausalLM...")
+        base = AutoModelForCausalLM.from_pretrained(
+            base_model,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True,
+        )
 
     print(f"Attaching LoRA adapter from {adapter_path}...")
     with warnings.catch_warnings(record=True) as caught:
@@ -89,7 +106,8 @@ def load_model(base_model: str, adapter_path: str):
             missing = str(w.message).count("lora_A")
             print(f"\n!!! WARNING: adapter did not fully attach ({missing} LoRA weights unmapped).")
             print("!!! The model is running WITHOUT your fine-tune — results will be random.")
-            print("!!! Match transformers/peft to training versions (peft 0.18.1, transformers 5.8.0).")
+            print("!!! Fix: load with AutoModelForImageTextToText (multimodal wrapper) so the")
+            print("!!! LoRA keys under model.language_model.layers.* match the training layout.")
             break
 
     return model, tokenizer
