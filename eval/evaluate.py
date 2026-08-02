@@ -285,6 +285,8 @@ def run_evaluation(args):
     print(metrics["classification_report"])
     print(f"PR-AUC:        {metrics['pr_auc']:.4f}")
     print(f"ROC-AUC:       {metrics['roc_auc']:.4f}")
+    print(f"F1 (weighted): {metrics['f1_weighted']:.4f}")
+    print(f"F1 (binary):   {metrics['f1']:.4f}")
     print(f"F2 Score:      {metrics['f2']:.4f}")
     print(f"MCC:           {metrics['mcc']:.4f}")
     print(f"Accuracy:      {metrics['accuracy']:.4f}")

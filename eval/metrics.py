@@ -28,6 +28,11 @@ def mcc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return matthews_corrcoef(y_true, y_pred)
 
 
+def f1_weighted(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Weighted F1 (per-class F1 averaged by class support) — TabReason/FinBen's metric."""
+    return f1_score(y_true, y_pred, average="weighted", zero_division=0)
+
+
 def compute_all(y_true: np.ndarray, y_pred: np.ndarray, y_scores: np.ndarray) -> dict:
     """Compute the full suite of evaluation metrics."""
     return {
@@ -35,6 +40,8 @@ def compute_all(y_true: np.ndarray, y_pred: np.ndarray, y_scores: np.ndarray) ->
         "roc_auc": roc_auc_score(y_true, y_scores),
         "f2": f2(y_true, y_pred),
         "mcc": mcc(y_true, y_pred),
+        "f1": f1_score(y_true, y_pred, zero_division=0),
+        "f1_weighted": f1_weighted(y_true, y_pred),
         "accuracy": accuracy_score(y_true, y_pred),
         "precision": precision_score(y_true, y_pred, zero_division=0),
         "recall": recall_score(y_true, y_pred, zero_division=0),
