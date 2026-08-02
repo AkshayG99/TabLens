@@ -5,7 +5,7 @@ import time
 import warnings
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer, BitsAndBytesConfig
 from peft import PeftModel
 
 BASE_MODEL = "unsloth/Qwen3.5-9B"
@@ -97,12 +97,24 @@ def load_model():
         bnb_4bit_compute_dtype=torch.float16,
         bnb_4bit_quant_type="nf4",
     )
-    base_model = AutoModelForCausalLM.from_pretrained(
+    # unsloth/Qwen3.5-9B is a multimodal wrapper (Qwen3_5ForConditionalGeneration).
+    # Training targeted model.language_model.layers.*, so we must load the same
+    # wrapper or the LoRA weights won't map. Fall back to CausalLM if unavailable.
+    loader = AutoModelForImageTextToText if AutoModelForImageTextToText is not None else AutoModelForCausalLM
+    base_model = loader.from_pretrained(
         BASE_MODEL,
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
     )
+    if not hasattr(base_model, "model") or not hasattr(base_model.model, "language_model"):
+        print("Wrapper lacks language_model; retrying with AutoModelForCausalLM...")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True,
+        )
 
     print("Loading LoRA adapter...")
     t2 = time.time()
@@ -126,7 +138,8 @@ def load_model():
             print("\n!!! WARNING: adapter did not fully attach")
             print(f"!!! {missing} LoRA weights could not be mapped to the base model.")
             print("!!! The model is running WITHOUT your fine-tune — results will be random.")
-            print("!!! Fix: match transformers/peft versions to training (peft 0.18.1, transformers 5.8.0).")
+            print("!!! Fix: load with AutoModelForImageTextToText (multimodal wrapper) so the")
+            print("!!! LoRA keys under model.language_model.layers.* match the training layout.")
             break
 
     return model, tokenizer
