@@ -16,10 +16,10 @@ lora_alpha: 32
 lora_target: all
 
 ### Dataset
-dataset_dir: data/processed/german
-dataset: train_explanations
+dataset_dir: data/cot_datasets
+dataset: german_v2_cot
 template: qwen
-cutoff_len: 1024
+cutoff_len: 2048
 max_samples: 100000
 overwrite_cache: true
 
@@ -35,6 +35,7 @@ ddp_timeout: 180000000
 
 ### Output
 output_dir: outputs/qwen3.5-9b-sft
+overwrite_output_dir: true
 logging_steps: 10
 save_steps: 500
 save_total_limit: 3
