@@ -232,7 +232,12 @@ def run_evaluation(args):
 
         prompt = build_inference_prompt(text, args.dataset)
         response = generate_prediction(
-            model, tokenizer, prompt, temperature=args.temperature, greedy=args.greedy
+            model,
+            tokenizer,
+            prompt,
+            temperature=args.temperature,
+            greedy=args.greedy,
+            max_new_tokens=args.max_new_tokens,
         )
 
         pred = extract_label(response)
@@ -313,6 +318,13 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.1, help="Generation temperature")
     parser.add_argument(
         "--greedy", action="store_true", help="Greedy decoding (deterministic, faster)"
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=1400,
+        help="Max tokens per sample. The verdict appears in the first ~100 tokens, "
+        "so ~140 is enough for a fast accuracy check (small tradeoff).",
     )
     args = parser.parse_args()
     run_evaluation(args)
