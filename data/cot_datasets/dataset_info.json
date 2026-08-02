@@ -1,5 +1,11 @@
 {
-  "german_v2_cot": {
-    "file_name": "german_v2_cot.jsonl"
+  "german_v2_cot_train": {
+    "file_name": "german_v2_cot_train.jsonl"
+  },
+  "german_v2_cot_val": {
+    "file_name": "german_v2_cot_val.jsonl"
+  },
+  "german_v2_cot_test": {
+    "file_name": "german_v2_cot_test.jsonl"
   }
 }

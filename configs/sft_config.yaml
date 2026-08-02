@@ -17,15 +17,21 @@ lora_target: all
 
 ### Dataset
 dataset_dir: data/cot_datasets
-dataset: german_v2_cot
-template: qwen
+# Train ONLY on the train split. german_v2_cot.jsonl (all 1000 rows) leaked
+# val+test into training — build per-split files with data/build_cot_splits.py
+# first (it also moves the verdict to the start of each target).
+dataset: german_v2_cot_train
+eval_dataset: german_v2_cot_val
+# qwen3_nothink matches eval's apply_chat_template(..., enable_thinking=False);
+# template "qwen" inserted the default Qwen system prompt and mismatched training/inference.
+template: qwen3_nothink
 cutoff_len: 2048
 max_samples: 100000
 overwrite_cache: true
 
 ### Training
 learning_rate: 2.0e-5
-num_train_epochs: 3
+num_train_epochs: 6
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 8
 lr_scheduler_type: cosine
@@ -33,9 +39,19 @@ warmup_ratio: 0.1
 fp16: true
 ddp_timeout: 180000000
 
+### Evaluation & checkpoint selection
+eval_strategy: steps
+eval_steps: 50
+eval_delay: 50
+metric_for_best_model: eval_loss
+greater_is_better: false
+load_best_model_at_end: true
+early_stopping_steps: 100
+plot_loss: true
+
 ### Output
 output_dir: outputs/qwen3.5-9b-sft
 overwrite_output_dir: true
 logging_steps: 10
-save_steps: 500
+save_steps: 50
 save_total_limit: 3

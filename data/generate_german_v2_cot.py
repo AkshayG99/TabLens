@@ -115,14 +115,19 @@ async def process_records(records: list, out_file_path: Path):
             
     print(f"Completed processing. Saved to {out_file_path}")
 
-async def main(limit: int | None = None, offset: int = 0):
+
+def verdict_first(output: str, target: int) -> str:
+    """Prepend the decision so the verdict isn't buried at the end of the COT."""
+    decision = "ACCEPT" if target == 1 else "REJECT"
+    prefix = f"Decision: {decision}\n\n"
+    if output.strip().startswith("Decision:"):
+        return output
+    return f"{prefix}{output.strip()}"
+
+async def main(limit: int | None = None, offset: int = 0, splits: list[str] | None = None):
     dataset = "german_v2"
-    splits = ["train", "val", "test"]
+    splits = splits or ["train", "val", "test"]
     
-    out_file = OUTPUT_DIR / f"{dataset}_cot.jsonl"
-    if offset == 0 and out_file.exists():
-        out_file.unlink()
-        
     all_records = []
     for split in splits:
         file_path = PROCESSED_DIR / dataset / f"{split}.jsonl"
@@ -138,11 +143,45 @@ async def main(limit: int | None = None, offset: int = 0):
         all_records = all_records[:limit]
         
     print(f"Processing {len(all_records)} records (offset: {offset}, limit: {limit})...")
-    await process_records(all_records, out_file)
+
+    # Write a separate, verdict-first COT file PER SPLIT so val/test never
+    # leak into training (the old single german_v2_cot.jsonl mixed all splits).
+    for split in splits:
+        out_file = OUTPUT_DIR / f"{dataset}_cot_{split}.jsonl"
+        if offset == 0 and out_file.exists():
+            out_file.unlink()
+
+        split_records = []
+        split_path = PROCESSED_DIR / dataset / f"{split}.jsonl"
+        if split_path.exists():
+            with open(split_path, "r") as f:
+                split_texts = [json.loads(line)["text"] for line in f if line.strip()]
+            split_records = [r for r in all_records if r["text"] in split_texts]
+
+        if split_records:
+            await process_records(split_records, out_file)
+
+        # Rewrite the FULL file with verdict-first output (Decision first).
+        # Loads every row (not just this batch) so resuming with --offset doesn't
+        # drop previously-appended rows, and is idempotent via verdict_first().
+        rewritten = []
+        if out_file.exists():
+            with open(out_file, "r") as f:
+                for line in f:
+                    if line.strip():
+                        rec = json.loads(line)
+                        rec["output"] = verdict_first(rec["output"], rec["target"])
+                        rewritten.append(rec)
+        if rewritten:
+            with open(out_file, "w") as f:
+                for rec in rewritten:
+                    f.write(json.dumps(rec) + "\n")
+            print(f"Rewrote {len(rewritten)} verdict-first rows to {out_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate COT explanations for german_v2")
     parser.add_argument("--limit", type=int, help="Maximum number of records to process in total")
     parser.add_argument("--offset", type=int, default=0, help="Starting index (offset) to process from")
+    parser.add_argument("--splits", type=str, default="train,val,test", help="Comma-separated splits to process")
     args = parser.parse_args()
-    asyncio.run(main(limit=args.limit, offset=args.offset))
+    asyncio.run(main(limit=args.limit, offset=args.offset, splits=[s.strip() for s in args.splits.split(",")]))
