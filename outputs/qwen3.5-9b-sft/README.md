@@ -18,7 +18,7 @@ should probably proofread and complete it, then remove this comment. -->
 
 # qwen3.5-9b-sft
 
-This model is a fine-tuned version of [unsloth/Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B) on the train_explanations dataset.
+This model is a fine-tuned version of [unsloth/Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B) on the german_v2_cot dataset.
 
 ## Model description
 
@@ -43,7 +43,7 @@ The following hyperparameters were used during training:
 - seed: 42
 - gradient_accumulation_steps: 8
 - total_train_batch_size: 16
-- optimizer: Use OptimizerNames.ADAMW_TORCH with betas=(0.9,0.999) and epsilon=1e-08 and optimizer_args=No additional optimizer arguments
+- optimizer: Use OptimizerNames.ADAMW_TORCH_FUSED with betas=(0.9,0.999) and epsilon=1e-08 and optimizer_args=No additional optimizer arguments
 - lr_scheduler_type: cosine
 - lr_scheduler_warmup_steps: 0.1
 - num_epochs: 3
@@ -56,7 +56,7 @@ The following hyperparameters were used during training:
 ### Framework versions
 
 - PEFT 0.18.1
-- Transformers 5.8.0
-- Pytorch 2.6.0+cu124
+- Transformers 5.6.0
+- Pytorch 2.12.1+cu130
 - Datasets 4.0.0
 - Tokenizers 0.22.2
