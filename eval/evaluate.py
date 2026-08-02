@@ -32,6 +32,11 @@ _REJECT_BOLD = re.compile(r"\*\*REJECTED?\*\*", re.IGNORECASE)
 _ACCEPT_BOLD = re.compile(r"\*\*ACCEPTED?\*\*", re.IGNORECASE)
 _REJECT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*REJECT", re.IGNORECASE)
 _ACCEPT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*ACCEPT", re.IGNORECASE)
+
+# Token IDs (Qwen3 tokenizer) used for probabilistic accept/reject scoring.
+# "Decision: ACCEPT" -> " ACCEPT" (53060); "Decision: REJECT" -> " RE" (3476) + "JECT".
+_ACCEPT_TOKEN_IDS = {53060, 93997, 10024, 16156, 63681, 49999, 52742, 11330, 87247, 25503, 23890}
+_REJECT_TOKEN_IDS = {3476, 762, 45427, 75725, 84282, 7602, 92060, 75035, 17030, 57409, 60476}
 _REJECT_TO = re.compile(r"\bdecisions?\s+to\s+REJECT", re.IGNORECASE)
 _ACCEPT_TO = re.compile(r"\bdecisions?\s+to\s+ACCEPT", re.IGNORECASE)
 _REJECT_WORD = re.compile(r"\b(?:reject|rejects|rejected|rejecting)\b", re.IGNORECASE)
@@ -120,7 +125,7 @@ def generate_prediction(
     max_new_tokens: int = 1400,
     temperature: float = 0.1,
     greedy: bool = False,
-) -> str:
+):
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
@@ -133,12 +138,39 @@ def generate_prediction(
             max_new_tokens=max_new_tokens,
             do_sample=not greedy,
             temperature=temperature if not greedy else None,
+            output_scores=True,
+            return_dict_in_generate=True,
         )
 
     response = tokenizer.decode(
-        outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
+        outputs.sequences[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
     )
-    return response
+    accept_score = _accept_score_from_scores(outputs.scores)
+    return response, accept_score
+
+
+def _accept_score_from_scores(scores) -> float:
+    """Probability of the ACCEPT token vs REJECT tokens at the model's decision step.
+
+    Walks the per-step logits once, tracking the step with the most total
+    accept/reject token mass (the verdict position), and returns
+    P(accept) / (P(accept) + P(reject)) there, in [0, 1]. Replaces the old hard
+    0/1 y_scores so ROC-AUC / PR-AUC are meaningful.
+    """
+    accept_ids = torch.tensor(sorted(_ACCEPT_TOKEN_IDS), dtype=torch.long, device=scores[0].device)
+    reject_ids = torch.tensor(sorted(_REJECT_TOKEN_IDS), dtype=torch.long, device=scores[0].device)
+
+    best_total = 0.0
+    best_score = 0.5
+    for step_logits in scores:
+        probs = torch.softmax(step_logits.float().squeeze(0), dim=-1)
+        p_accept = probs[accept_ids].sum().item()
+        p_reject = probs[reject_ids].sum().item()
+        total = p_accept + p_reject
+        if total > best_total:
+            best_total = total
+            best_score = p_accept / total if total > 1e-9 else 0.5
+    return best_score
 
 
 def _verdict(match: re.Match) -> int:
@@ -231,7 +263,7 @@ def run_evaluation(args):
         label = sample["target"]
 
         prompt = build_inference_prompt(text, args.dataset)
-        response = generate_prediction(
+        response, score = generate_prediction(
             model,
             tokenizer,
             prompt,
@@ -244,9 +276,6 @@ def run_evaluation(args):
         if pred is None:
             parse_failures += 1
             pred = 1  # default to majority class to avoid crashing metrics
-            score = 0.0
-        else:
-            score = float(pred)
 
         y_true.append(label)
         y_pred.append(pred)
@@ -257,6 +286,7 @@ def run_evaluation(args):
             "text": text,
             "true_label": "good" if label == 1 else "bad",
             "predicted_label": "good" if pred == 1 else "bad",
+            "accept_score": round(score, 6),
             "correct": label == pred,
             "raw_output": response,
         })
