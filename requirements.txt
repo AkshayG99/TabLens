@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
 accelerate==1.11.0
 aiofiles==24.1.0
 aiohappyeyeballs==2.7.1
@@ -8,8 +9,8 @@ annotated-types==0.7.0
 antlr4-python3-runtime==4.9.3
 anyio==4.14.2
 attrs==26.1.0
-audioop-lts==0.2.2
 av==16.0.0
+bitsandbytes>=0.44
 brotli==1.2.0
 certifi==2026.6.17
 cffi==2.1.0
@@ -105,10 +106,10 @@ threadpoolctl==3.6.0
 tiktoken==0.13.0
 tokenizers==0.22.2
 tomlkit==0.13.3
-torch==2.13.0
-torchaudio==2.11.0
+torch==2.13.0+cu126
+torchaudio==2.11.0+cu126
 torchdata==0.11.0
-torchvision==0.28.0
+torchvision==0.28.0+cu126
 tqdm==4.69.0
 transformers==5.6.0
 trl==0.24.0
