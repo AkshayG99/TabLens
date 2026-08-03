@@ -10,14 +10,6 @@ finetuning_type: lora
 quantization_bit: 4
 quantization_method: bitsandbytes
 
-### Kernel optimizations (Triton)
-# Liger fuses RoPE/MLP/RMSNorm + the cross-entropy loss, which removes the
-# batch*seq*vocab loss tensor that previously blew up at batch 2. FA3 is a
-# Triton FlashAttention kernel. Requires `pip install -r
-# LLaMA-Factory/requirements/liger-kernel.txt` and `flash-attn>=2.7`.
-enable_liger_kernel: true
-flash_attn: fa3
-
 ### LoRA
 lora_rank: 16
 lora_alpha: 32
@@ -37,25 +29,23 @@ template: qwen3_nothink
 cutoff_len: 1536
 max_samples: 100000
 overwrite_cache: true
-# Pack short sequences together so the 1536 cutoff isn't wasted on padding
-# (avg sample is ~1251 tokens). Reduces effective tokens per step ~20%.
-packing: true
 
 ### Training
 learning_rate: 2.0e-5
 num_train_epochs: 6
-# Batch 2 is safe now that liger fuses the cross-entropy loss (which was the
-# OOM culprit at batch*seq*vocab); grad-accum 4 keeps effective batch at 8.
-per_device_train_batch_size: 2
+# batch 1 x grad-accum 8 = effective batch 8. 12GB can't hold the
+# batch*seq*vocab loss tensor (vocab ~152k) at larger batches, and
+# liger-kernel/flash-attn (which would fuse it) are not installed here.
+per_device_train_batch_size: 1
 per_device_eval_batch_size: 1
-gradient_accumulation_steps: 4
+gradient_accumulation_steps: 8
 gradient_checkpointing: true
 # paged_adamw_8bit offloads optimizer states to CPU when idle — big VRAM
 # saving on 12GB GPUs (RTX 4070).
 optim: paged_adamw_8bit
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
-# bf16 is faster than fp16 on Ada/Ampere GPUs and plays better with 4-bit QLoRA.
+# bf16 is faster than fp16 on Ada GPUs and plays better with 4-bit QLoRA.
 bf16: true
 ddp_timeout: 180000000
 
