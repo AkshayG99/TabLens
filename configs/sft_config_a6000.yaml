@@ -5,6 +5,12 @@ model_name_or_path: unsloth/Qwen3.5-9B
 stage: sft
 do_train: true
 finetuning_type: lora
+# Fast kernels (this branch): flash-attn (fa2) speeds up the 8 dense-attention
+# layers, liger-kernel fuses loss/norm/rope for lower memory + higher throughput.
+# Install via scripts/run_sft_a6000.sh before training. If install fails, set
+# both back to disabled and use the merged main config instead.
+flash_attn: fa2
+enable_liger_kernel: true
 
 ### Quantization
 quantization_bit: 4
@@ -29,16 +35,19 @@ template: qwen3_nothink
 cutoff_len: 1536
 max_samples: 100000
 overwrite_cache: true
+# Packing concatenates samples into full 1536-token rows (no padding waste).
+# Safe with liger's fused cross-entropy; drop to false if you want per-sample
+# alignment or if eval behaves unexpectedly.
+packing: true
 
 ### Training
 learning_rate: 2.0e-5
 num_train_epochs: 6
-# A6000 variant: 48GB lets us use batch 4 x grad-accum 2 (effective batch 8,
-# same as the 12GB config) for ~4x faster wall-clock. No flash-attn / liger
-# required — the dense-attention layers are fine on torch SDPA.
-per_device_train_batch_size: 4
+# Optimized variant: flash-attn + liger fuse the loss tensor, so 48GB easily
+# holds batch 8 x grad-accum 1 (effective batch 8, same as main) at ~8x the
+# wall-clock speed of the batch-1 12GB config.
+per_device_train_batch_size: 8
 per_device_eval_batch_size: 4
-gradient_accumulation_steps: 2
 gradient_checkpointing: true
 optim: paged_adamw_8bit
 lr_scheduler_type: cosine
