@@ -25,7 +25,8 @@ eval_dataset: german_v2_cot_val
 # qwen3_nothink matches eval's apply_chat_template(..., enable_thinking=False);
 # template "qwen" inserted the default Qwen system prompt and mismatched training/inference.
 template: qwen3_nothink
-cutoff_len: 2048
+# Max real sequence is 1251 tokens, so 1536 is safe headroom on 12GB VRAM.
+cutoff_len: 1536
 max_samples: 100000
 overwrite_cache: true
 
@@ -39,6 +40,9 @@ per_device_train_batch_size: 1
 per_device_eval_batch_size: 1
 gradient_accumulation_steps: 8
 gradient_checkpointing: true
+# paged_adamw_8bit offloads optimizer states to CPU when idle — big VRAM
+# saving on 12GB GPUs (RTX 4070).
+optim: paged_adamw_8bit
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 fp16: true
