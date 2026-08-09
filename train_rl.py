@@ -8,7 +8,7 @@ from trl import DPOTrainer
 # Configuration
 # ============================================================================
 # The HF repo ID where you uploaded your merged model
-MODEL_ID = "your-hf-username/your-repo-name" 
+MODEL_ID = "creativelapse/qwen3.5-9b-merged" 
 # The dataset containing your DPO preferences (prompt, chosen, rejected)
 # For RL, you need a dataset with pairs of good/bad responses to the same prompt.
 DATASET_NAME = "Anthropic/hh-rlhf" 
