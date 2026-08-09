@@ -4,7 +4,13 @@ set -x
 # ==============================================================================
 # DisCO Fine-tuning Script for Qwen + LoRA
 # Based on verl PR #3357: https://github.com/verl-project/verl/pull/3357
+#
+# MUST run from the verl repo root: disco_trainer.yaml uses a relative Hydra
+# searchpath (file://verl/trainer/config) that resolves from CWD. We cd there
+# automatically. Data paths are made absolute so they still resolve.
 # ==============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 1. Define Model and System Prompt
 # Set your model path here once you have uploaded/merged the Qwen model with LoRA.
@@ -16,8 +22,8 @@ export SYSTEM_PROMPT="You are a helpful AI assistant. Please provide your reason
 
 # 2. Define Dataset Paths
 # Make sure your data preparation script includes the SYSTEM_PROMPT in the chat template!
-TRAIN_DATA_FILE="./data/train.parquet"
-VAL_DATA_FILE="./data/val.parquet"
+TRAIN_DATA_FILE="$SCRIPT_DIR/data/train.parquet"
+VAL_DATA_FILE="$SCRIPT_DIR/data/val.parquet"
 
 # 3. DisCO algorithm parameters
 loss_mode='disco'
@@ -31,11 +37,15 @@ n_gpus_per_node=1
 ppo_micro_batch_size_per_gpu=4
 rollout_n=8
 
-# 5. Launch Training
-# Uses recipe.disco.main_disco from the PR
+# 5. Launch Training from the verl repo root (required for the Hydra searchpath)
+cd "$SCRIPT_DIR/verl"
+# Uses recipe.disco.main_disco from the PR. Reward function is TabLens' own
+# binary credit-verdict scorer (the recipe default is a math \boxed{} checker).
 python3 -m recipe.disco.main_disco \
     algorithm.adv_estimator=disco \
     algorithm.filter_groups.enable=False \
+    custom_reward_function.path=$SCRIPT_DIR/reward/credit_reward.py \
+    custom_reward_function.name=credit_reward_fn \
     data.train_files=$TRAIN_DATA_FILE \
     data.val_files=$VAL_DATA_FILE \
     data.train_batch_size=128 \
