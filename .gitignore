@@ -11,3 +11,7 @@ dist/
 build/
 eval/results/
 offload/
+
+# Merged model lives on HuggingFace (creativelapse/qwen3.5-9b-merged).
+# 17GB safetensors exceeds GitHub's 2GB LFS limit.
+outputs/qwen3.5-9b-merged/

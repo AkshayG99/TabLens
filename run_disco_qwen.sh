@@ -8,7 +8,7 @@ set -x
 
 # 1. Define Model and System Prompt
 # Set your model path here once you have uploaded/merged the Qwen model with LoRA.
-export MODEL_PATH="your-qwen-lora-model-path"
+export MODEL_PATH="creativelapse/qwen3.5-9b-merged"
 
 # We define a system prompt to ensure explanations are concise and fit within token limits.
 # In verl, you typically format this into your parquet dataset's "prompt" column.
@@ -27,7 +27,7 @@ tau=10             # tau=10 is recommended for 'logL', tau=1 is recommended for 
 # 4. Hardware configurations
 # Adjust these based on your available hardware (e.g. 8x GPUs per node)
 nnodes=1
-n_gpus_per_node=8 
+n_gpus_per_node=1 
 ppo_micro_batch_size_per_gpu=4
 rollout_n=8
 
