@@ -20,6 +20,7 @@
 #   B) transformers 5.x:  vllm get_cached_tokenizer (all_special_tokens_extended)
 #   C) Python 3.12/uvloop: fsdp_workers.py event-loop guard
 #   D) Ray dashboard_agent: opentelemetry/protobuf version pins
+#   E) dp_actor: make flash_attn import optional (pure-torch bert_padding fallback)
 # All patches are idempotent - safe to rerun.
 # ==============================================================================
 set -euo pipefail
@@ -97,6 +98,51 @@ else:
     print("     already patched or pattern changed; skipping")
 PYEOF
 
+echo "==> 2c/6 Patch E: make flash_attn import optional in dp_actor (pure-torch fallback)..."
+python - <<'PYEOF'
+p = "verl/verl/workers/actor/dp_actor.py"
+s = open(p).read()
+old = """if is_cuda_available:
+    from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
+elif is_npu_available:
+    from transformers.integrations.npu_flash_attention import index_first_axis, pad_input, rearrange, unpad_input"""
+new = """try:
+    from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
+except (ImportError, OSError):
+    import torch
+    from einops import rearrange
+
+    def index_first_axis(tensor, indices):
+        return tensor[indices]
+
+    def unpad_input(hidden_states, attention_mask):
+        seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+        indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
+        max_seqlen_in_batch = int(seqlens_in_batch.max().item())
+        cu_seqlens = torch.nn.functional.pad(
+            torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0)
+        )
+        return (
+            index_first_axis(hidden_states.reshape(-1, *hidden_states.shape[2:]), indices),
+            indices,
+            cu_seqlens,
+            max_seqlen_in_batch,
+        )
+
+    def pad_input(hidden_states, indices, batch, seqlen):
+        output = torch.zeros(
+            batch * seqlen, *hidden_states.shape[1:],
+            device=hidden_states.device, dtype=hidden_states.dtype,
+        )
+        output[indices] = hidden_states
+        return output.view(batch, seqlen, *hidden_states.shape[1:])"""
+if old in s:
+    open(p, "w").write(s.replace(old, new))
+    print("     patched flash_attn import fallback")
+else:
+    print("     already patched or pattern changed; skipping")
+PYEOF
+
 echo "==> 3/6 Installing vLLM (rollout engine) + fast kernels..."
 pip install vllm
 
@@ -142,9 +188,17 @@ else
         HAS_NVCC=true
     fi
     echo "     Building flash-attn from source with nvcc (can take 15-30 min)..."
-    pip install flash-attn --no-build-isolation
-    python -c "import flash_attn; print('     flash-attn OK:', flash_attn.__version__)" \
-        || { echo "     ERROR: flash-attn build failed."; cat /tmp/fa_err.txt; exit 1; }
+    if pip install flash-attn --no-build-isolation && python -c "import flash_attn" 2>>/tmp/fa_err.txt; then
+        echo "     flash-attn OK: $(python -c 'import flash_attn; print(flash_attn.__version__)')"
+    else
+        echo "     WARNING: flash-attn not installed. dp_actor will use the pure-torch"
+        echo "     bert_padding fallback (Patch E), so training can still run."
+        echo "     To install it later:"
+        echo "       export PATH=/usr/local/cuda/bin:/usr/local/cuda-12.8/bin:\$PATH"
+        echo "       export TORCH_CUDA_ARCH_LIST='8.6'"
+        echo "       pip install flash-attn --no-build-isolation"
+        tail -5 /tmp/fa_err.txt
+    fi
 fi
 
 echo "==> 3c/6 Installing liger-kernel + linear-attn kernels..."
@@ -187,6 +241,17 @@ else
     echo "     otel/protobuf pins:    MISSING"
 fi
 
+if python -c "s=open('verl/verl/workers/actor/dp_actor.py').read(); raise SystemExit(0 if 'except (ImportError, OSError):' in s else 1)" 2>/dev/null; then
+    echo "     flash_attn fallback:    OK"
+else
+    echo "     flash_attn fallback:    MISSING (re-run this script)"
+fi
+if python -c "import flash_attn; raise SystemExit(0)" 2>/dev/null; then
+    echo "     flash-attn installed:   $(python -c 'import flash_attn; print(flash_attn.__version__)')"
+else
+    echo "     flash-attn installed:   no (using pure-torch fallback)"
+fi
+
 echo "==> 5/6 Done."
 echo
 echo "Next steps (manual):"
@@ -198,3 +263,8 @@ echo "       tmux new -s train"
 echo "  4. Run training (venv MUST be active):"
 echo "       bash run_disco_qwen.sh 2>&1 | tee /tmp/disco_smoke.log"
 echo "     Detach with Ctrl-b d, reattach with: tmux attach -t train"
+echo "  5. If the patch check says flash-attn is NOT installed, training still works"
+echo "     (pure-torch fallback) but use_remove_padding is slower; compile it later via:"
+echo "       export PATH=/usr/local/cuda/bin:/usr/local/cuda-12.8/bin:\$PATH"
+echo "       export TORCH_CUDA_ARCH_LIST='8.6'"
+echo "       pip install flash-attn --no-build-isolation"
