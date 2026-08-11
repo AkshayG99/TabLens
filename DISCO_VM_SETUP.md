@@ -36,13 +36,16 @@ bash scripts/setup_disco_a6000.sh
 ```
 
 This installs verl (PR #3357 head), vLLM, flash-attn, liger-kernel, causal-conv1d,
-flash-linear-attention. It clones verl into `./verl` inside the repo;
-`run_disco_qwen.sh` uses that location (or `~/verl`) automatically.
+flash-linear-attention **and auto-applies the four compatibility patches in
+section 5** (idempotent, safe to rerun; it verifies them at the end). It clones
+verl into `./verl` inside the repo; `run_disco_qwen.sh` uses that location (or
+`~/verl`) automatically.
 
-## 5. CRITICAL patches — do all four, in order
+## 5. Compatibility patches (now automatic)
 
 A fresh install pulls transformers 5.x and the latest Ray, which break verl/vLLM.
-Apply exactly what's below.
+`scripts/setup_disco_a6000.sh` applies all four below; skip this section unless
+you set the environment up by hand.
 
 ### 5a. transformers 5.x rename (`AutoModelForVision2Seq` -> `AutoModelForImageTextToText`)
 
