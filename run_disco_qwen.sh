@@ -40,7 +40,14 @@ ppo_micro_batch_size_per_gpu=1
 rollout_n=1
 
 # 5. Launch Training from the verl repo root (required for the Hydra searchpath)
-cd "$HOME/verl"
+if [ -d "$HOME/verl" ]; then
+    cd "$HOME/verl"
+elif [ -d "$SCRIPT_DIR/verl" ]; then
+    cd "$SCRIPT_DIR/verl"
+else
+    echo "ERROR: verl repo not found at $HOME/verl or $SCRIPT_DIR/verl" >&2
+    exit 1
+fi
 # Uses recipe.disco.main_disco from the PR. Reward function is TabLens' own
 # binary credit-verdict scorer (the recipe default is a math \boxed{} checker).
 python3 -m recipe.disco.main_disco \
