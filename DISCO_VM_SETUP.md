@@ -141,14 +141,17 @@ do NOT re-format `prompt` into a tokenized string (that was the original bug):
 
 Edit `run_disco_qwen.sh`:
 
-- `MODEL_PATH` — your merged model (HF repo id or local dir). For a first end-to-end
-  check, keep the default `Qwen/Qwen2.5-0.5B`.
+- `MODEL_PATH` is already set to the merged model (`creativelapse/qwen3.5-9b-merged`).
+  For a first end-to-end check you can switch it to `Qwen/Qwen2.5-0.5B`.
 - `n_gpus_per_node` — match the VM (`nvidia-smi | grep -c A6000`).
 
-The committed batch sizes / memory knobs are the known-good **12GB-GPU** settings
-(50/50 steps clean). On an A6000 (48GB) you can scale up: `train_batch_size`,
-`ppo_mini_batch_size`, `max_num_batched_tokens=8192`, `max_num_seqs=256`,
-`gpu_memory_utilization=0.85`, `ppo_max_token_len_per_gpu`.
+The script trains **LoRA** (`model.lora_rank=32`) on top of the frozen merged model —
+required for a 9B policy on one 48GB card (full fine-tune needs ~144GB).
+
+The committed batch sizes / memory knobs are known-good for the 9B model on one
+A6000 (48GB). If it OOMs, lower `max_num_seqs` or `ppo_max_token_len_per_gpu`;
+if vLLM reports no KV cache memory, raise `gpu_memory_utilization` or lower
+`max_num_seqs`.
 
 **Run it with the venv ACTIVE** (otherwise `python3` is the system interpreter and
 you get `ModuleNotFoundError: No module named 'hydra'`):

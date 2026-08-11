@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 1. Define Model and System Prompt
 # Set your model path here once you have uploaded/merged the Qwen model with LoRA.
-export MODEL_PATH="Qwen/Qwen2.5-0.5B"
+export MODEL_PATH="creativelapse/qwen3.5-9b-merged"
 
 # We define a system prompt to ensure explanations are concise and fit within token limits.
 # In verl, you typically format this into your parquet dataset's "prompt" column.
@@ -63,6 +63,9 @@ python3 -m recipe.disco.main_disco \
     data.max_response_length=512 \
     data.filter_overlong_prompts=True \
     actor_rollout_ref.model.path=$MODEL_PATH \
+    actor_rollout_ref.model.lora_rank=32 \
+    actor_rollout_ref.model.lora_alpha=16 \
+    actor_rollout_ref.model.target_modules=all-linear \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
@@ -83,12 +86,12 @@ python3 -m recipe.disco.main_disco \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.6 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
     actor_rollout_ref.rollout.n=$rollout_n \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
