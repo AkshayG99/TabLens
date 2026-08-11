@@ -115,36 +115,20 @@ else:
 PYEOF
 
 echo "==> 3b/6 Installing flash-attn (prebuilt wheel preferred)..."
-# Auto-detect GPU compute capability so kernels compile for THIS GPU (A6000 = 8.6).
-GPU_ARCH="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')"
-export TORCH_CUDA_ARCH_LIST="${GPU_ARCH:-8.6}"
-echo "     TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
-if pip install flash-attn 2>/tmp/fa_err.txt && python -c "import flash_attn" 2>>/tmp/fa_err.txt; then
-    echo "     flash-attn OK: $(python -c 'import flash_attn; print(flash_attn.__version__)')"
+if pip install flash-attn 2>/tmp/fa_err.txt; then
+    echo "     flash-attn: prebuilt wheel OK."
 else
-    echo "     flash-attn: no usable prebuilt wheel for this torch/CUDA combo; building from source."
-    if ! $HAS_NVCC; then
-        echo "     No nvcc found. Installing CUDA toolkit 12.8 (needs the NVIDIA apt repo)..."
-        cd /tmp
-        wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-        if [ "$(id -u)" -eq 0 ]; then
-            dpkg -i cuda-keyring_1.1-1_all.deb
-            apt-get update -qq
-            apt-get install -y cuda-toolkit-12-8
-        else
-            sudo dpkg -i cuda-keyring_1.1-1_all.deb
-            sudo apt-get update -qq
-            sudo apt-get install -y cuda-toolkit-12-8
-        fi
-        cd - >/dev/null
-        export PATH=/usr/local/cuda-12.8/bin:$PATH
-        export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-        HAS_NVCC=true
+    echo "     flash-attn: no prebuilt wheel for this torch/CUDA combo."
+    if $HAS_NVCC; then
+        echo "     Building from source with nvcc (can take 15-30 min)..."
+        pip install flash-attn --no-build-isolation
+    else
+        echo "     ERROR: prebuilt wheel missing AND no nvcc to build from source."
+        echo "     Install CUDA toolkit 12.x, then rerun:"
+        echo "       pip install flash-attn --no-build-isolation"
+        cat /tmp/fa_err.txt
+        exit 1
     fi
-    echo "     Building flash-attn from source with nvcc (can take 15-30 min)..."
-    pip install flash-attn --no-build-isolation
-    python -c "import flash_attn; print('     flash-attn OK:', flash_attn.__version__)" \
-        || { echo "     ERROR: flash-attn build failed."; cat /tmp/fa_err.txt; exit 1; }
 fi
 
 echo "==> 3c/6 Installing liger-kernel + linear-attn kernels..."
