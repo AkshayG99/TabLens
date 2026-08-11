@@ -154,12 +154,15 @@ if vLLM reports no KV cache memory, raise `gpu_memory_utilization` or lower
 `max_num_seqs`.
 
 **Run it with the venv ACTIVE** (otherwise `python3` is the system interpreter and
-you get `ModuleNotFoundError: No module named 'hydra'`):
+you get `ModuleNotFoundError: No module named 'hydra'`). Run it inside `tmux`
+(setup script installs it) so training survives SSH disconnects:
 
 ```bash
 cd TabLens
 source ~/tablens-venv/bin/activate
+tmux new -s train
 bash run_disco_qwen.sh 2>&1 | tee /tmp/disco_smoke.log
+# detach: Ctrl-b d   |   reattach: tmux attach -t train
 ```
 
 ## 8. What success looks like

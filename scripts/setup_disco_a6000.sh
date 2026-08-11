@@ -38,6 +38,18 @@ fi
 
 python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)" || { echo "ERROR: torch not installed. Install torch (cu124) first."; exit 1; }
 
+echo "==> 0b/6 Installing tmux (so training survives SSH disconnects)..."
+if command -v tmux >/dev/null 2>&1; then
+    echo "     tmux already installed ($(tmux -V))"
+else
+    if [ "$(id -u)" -eq 0 ]; then
+        apt-get update -qq && apt-get install -y tmux
+    else
+        sudo apt-get update -qq && sudo apt-get install -y tmux
+    fi
+    echo "     installed $(tmux -V)"
+fi
+
 echo "==> 1/6 Upgrading build tools..."
 pip install --upgrade pip wheel setuptools ninja packaging
 
@@ -165,4 +177,8 @@ echo "Next steps (manual):"
 echo "  1. Edit run_disco_qwen.sh -> export MODEL_PATH pointing at the merged model"
 echo "     (either a local dir or a HuggingFace repo id like <user>/qwen3.5-9b-merged)"
 echo "  2. Set n_gpus_per_node to match this VM's GPU count (run: nvidia-smi | grep -c 'A6000')"
-echo "  3. bash run_disco_qwen.sh"
+echo "  3. Start a tmux session so training keeps running if you disconnect:"
+echo "       tmux new -s train"
+echo "  4. Run training (venv MUST be active):"
+echo "       bash run_disco_qwen.sh 2>&1 | tee /tmp/disco_smoke.log"
+echo "     Detach with Ctrl-b d, reattach with: tmux attach -t train"
