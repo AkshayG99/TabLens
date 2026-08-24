@@ -1,0 +1,31 @@
+# TabLens GRPO training requirements - Python 3.10 servers (e.g. trpro-slurm).
+# Same stack as requirements.txt; only numpy differs (2.5.x dropped py3.10).
+# Install: pip install -r requirements-grpo-py310.txt
+
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# --- core training stack ---
+torch==2.13.0+cu126
+transformers==5.6.0
+trl==0.24.0            # GRPOTrainer
+peft==0.18.1
+datasets==4.0.0
+accelerate==1.11.0
+bitsandbytes>=0.44     # needed by the 4070 profile (--quantize 4bit); unused on bf16 servers but harmless
+safetensors==0.8.0
+huggingface_hub==1.24.0
+
+# --- pinned transitives that matter ---
+numpy==2.2.6           # last numpy supporting Python 3.10 (main file uses 2.5.1)
+tqdm==4.69.0
+PyYAML==6.0.3
+packaging==26.2
+
+# --- optional ---
+# vllm                  # only if training with --use-vllm
+# hf_transfer==0.1.9    # faster HF downloads (set HF_HUB_ENABLE_HF_TRANSFER=1)
+
+# --- NOT needed for GRPO (uncomment if regenerating dataset or running eval) ---
+# pandas==2.3.3         # prepare_data.py, data/*
+# scikit-learn==1.9.0   # data/preprocess.py, eval/metrics.py
+# ucimlrepo==0.0.7      # test.py raw data fetch
