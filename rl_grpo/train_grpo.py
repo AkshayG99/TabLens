@@ -5,14 +5,17 @@ Single process, single GPU, no Ray, no Hydra, no source patches.
 LoRA/QLoRA via PEFT, dense rule-based reward from rl_grpo/rewards.py.
 
 Examples:
-    # VM (A6000 48GB), full run
-    python rl_grpo/train_grpo.py --profile a6000
+    # Any single-GPU box: profile auto-detected from VRAM
+    #   a6000 (>=38 GB, bf16 LoRA) / 24g (>=20 GB, 4-bit QLoRA) / 4070 (<20 GB)
+    python rl_grpo/train_grpo.py
 
-    # Local 12GB card (forces 4-bit QLoRA)
+    # Or pin one explicitly
+    python rl_grpo/train_grpo.py --profile a6000
+    python rl_grpo/train_grpo.py --profile 24g
     python rl_grpo/train_grpo.py --profile 4070
 
     # 10-minute smoke test before burning real compute
-    python rl_grpo/train_grpo.py --profile a6000 --max-steps 3 --num-generations 8 \
+    python rl_grpo/train_grpo.py --max-steps 3 --num-generations 8 \
         --per-device-batch 8 --train-limit 64
 """
 
@@ -22,6 +25,10 @@ import os
 import sys
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Reduce allocator fragmentation on tight cards (recommended by the CUDA OOM
+# message itself); set before any torch/CUDA init. setdefault so an explicit
+# export still wins.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 from datasets import load_dataset
 from peft import LoraConfig
@@ -70,6 +77,18 @@ PROFILES = {
         lr=1e-5,
         optim="adamw_torch_fused",
     ),
+    "24g": dict(  # 24 GB cards (3090/4090/L4/...): bf16 weights alone are ~18.6 GB,
+        quantize="4bit",  # so 4-bit QLoRA is mandatory; batch shape mirrors a6000
+        lora_rank=32,
+        lora_alpha=64,
+        num_generations=8,
+        per_device_batch=8,
+        grad_accum=4,          # -> effective batch 32 completions = 4 prompts x 8 gens
+        max_prompt_length=1024,
+        max_completion_length=512,
+        lr=1e-5,
+        optim="adamw_bnb_8bit",
+    ),
     "4070": dict(  # 12-16GB cards: 4-bit QLoRA mandatory
         quantize="4bit",
         lora_rank=16,
@@ -93,7 +112,8 @@ PROFILES = {
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", default="creativelapse/qwen3.5-9b-merged")
-    p.add_argument("--profile", choices=sorted(PROFILES), default="a6000")
+    p.add_argument("--profile", choices=["auto"] + sorted(PROFILES), default="auto",
+                   help="VRAM tier; 'auto' detects from the GPU (default)")
     p.add_argument("--quantize", choices=["none", "4bit"], default=None,
                    help="Override profile quantization")
     p.add_argument("--train-file", default="data/processed/german_v2/train.jsonl")
@@ -138,6 +158,19 @@ def build_dataset(path, limit=None):
 
 def main():
     args = parse_args()
+
+    import torch
+    if not torch.cuda.is_available():
+        raise SystemExit("CUDA not available - check driver / venv (nvidia-smi first).")
+    if args.profile == "auto":
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        if vram_gb >= 38:
+            args.profile = "a6000"      # 48GB-class: bf16 LoRA fits
+        elif vram_gb >= 20:
+            args.profile = "24g"        # 24GB-class: bf16 weights alone are too big
+        else:
+            args.profile = "4070"
+        print(f"[env] profile auto -> '{args.profile}' ({vram_gb:.1f} GB VRAM)")
     prof = dict(PROFILES[args.profile])
     if args.quantize is not None:
         prof["quantize"] = args.quantize
@@ -158,9 +191,6 @@ def main():
             f"per-device batch ({per_device}) must be divisible by num_generations ({n_gens})"
         )
 
-    import torch
-    if not torch.cuda.is_available():
-        raise SystemExit("CUDA not available - check driver / venv (nvidia-smi first).")
     print(f"[env] torch {torch.__version__} | cuda {torch.version.cuda} | gpu {torch.cuda.get_device_name(0)}")
 
     output_dir = args.output_dir or f"outputs/grpo/{os.path.basename(args.model.rstrip('/'))}-{args.profile}"
