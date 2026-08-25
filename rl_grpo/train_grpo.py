@@ -78,12 +78,12 @@ PROFILES = {
         optim="adamw_torch_fused",
     ),
     "24g": dict(  # 24 GB cards (3090/4090/L4/...): bf16 weights alone are ~18.6 GB,
-        quantize="4bit",  # so 4-bit QLoRA is mandatory; batch shape mirrors a6000
-        lora_rank=32,
-        lora_alpha=64,
-        num_generations=8,
-        per_device_batch=8,
-        grad_accum=4,          # -> effective batch 32 completions = 4 prompts x 8 gens
+        quantize="4bit",  # so 4-bit QLoRA is mandatory. First tuning (8 gens x batch 8)
+        lora_rank=32,     # OOMed at step 0: the lm_head logprob pass materializes
+        lora_alpha=64,    # batch x 512 x 248k logits on top of rollout states. 4x4x8
+        num_generations=4,
+        per_device_batch=4,
+        grad_accum=8,          # -> effective batch 32 completions = 8 prompts x 4 gens
         max_prompt_length=1024,
         max_completion_length=512,
         lr=1e-5,
