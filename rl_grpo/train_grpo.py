@@ -65,20 +65,31 @@ PROFILES = {
         lora_rank=32,
         lora_alpha=64,
         num_generations=8,
-        per_device_batch=16,   # completions per fwd/bwd; must be a multiple of num_generations
-        grad_accum=2,          # -> effective batch 32 completions = 4 prompts x 8 gens
+        # Was 16 (grad_accum=2). OOMed on the real 48GB box: "Tried to
+        # allocate 15.16 GiB" is almost exactly
+        # per_device_batch(16) x (max_prompt_length+max_completion_length)(2048)
+        # x vocab(~248k) x 2 bytes(bf16) -- the lm_head logprob pass, whose
+        # size scales with per_device_batch just as much as with
+        # max_completion_length. Halved to 8 (grad_accum doubled to 4 to keep
+        # the same effective batch: 4 micro-batches x 1 prompt x 8 gens = 4
+        # prompts x 8 gens = 32 completions, same as before), matching how
+        # the 24g profile's own earlier OOM was fixed (halve rollout width,
+        # not just completion length).
+        per_device_batch=8,    # completions per fwd/bwd; must be a multiple of num_generations
+        grad_accum=4,          # -> effective batch 32 completions = 4 prompts x 8 gens
         max_prompt_length=1024,
-        # Was 512: checkpoint-100's own trainer_state.json shows
-        # completions/clipped_ratio == 1.0 and mean_terminated_length == 0.0
-        # on every single logged step -- literally no rollout ever reached a
-        # natural stop at 512, so (with mask_truncated_completions=True below)
-        # ~every completion was masked out of the loss the whole run. SFT
-        # completions average ~1100-1350 tokens before concluding, so bump
-        # toward that. Watch VRAM: the lm_head logprob pass materializes
-        # batch x seq_len x 248k-vocab logits, i.e. cost scales ~linearly
-        # with this value. Run the smoke test first; drop back toward 512 if
-        # it OOMs before a real run.
-        max_completion_length=1024,
+        # Was 512, then 1024 (that bump caused the OOM above alongside the
+        # per_device_batch cut). Landed on 768 as a middle ground: still well
+        # above the original 512 that caused 100% rollout clipping on
+        # checkpoint-100, but leaves headroom instead of exactly maxing out
+        # the card at the previous 47.4 GiB error's usage. With the
+        # decision-first SYSTEM_PROMPT (rl_grpo/prompts.py) the verdict lands
+        # in the first ~10 tokens regardless of this value, so a completion
+        # that's still clipped by 768 tokens is scorable either way (see
+        # mask_truncated_completions=False below) -- this value now mainly
+        # controls how much reasoning tail the policy gets to write, not
+        # whether the reward signal exists at all.
+        max_completion_length=768,
         lr=1e-5,
         optim="adamw_torch_fused",
     ),
