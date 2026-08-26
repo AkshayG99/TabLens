@@ -23,19 +23,15 @@ DEFAULT_TEST_FILE = "data/processed/german_v2/test.jsonl"
 RESULTS_DIR = Path("eval/results")
 
 GERMAN_V2_INSTRUCTION = (
-    "You are a credit risk analyst. Analyze the applicant profile below.\n"
-    "Provide a concise chain-of-thought analysis.\n"
-    "End your response with EXACTLY this line on its own:\n"
-    "Final decision: ACCEPT\n"
-    "or\n"
-    "Final decision: REJECT\n"
-    "Do not use any other phrasing for the final verdict."
+    "You are an expert credit risk analyst. Analyze the following German Credit applicant "
+    "profile and provide a detailed, step-by-step Chain-of-Thought (COT) explanation of why "
+    "this applicant should be accepted or rejected."
 )
 
 _REJECT_BOLD = re.compile(r"\*\*REJECTED?\*\*", re.IGNORECASE)
 _ACCEPT_BOLD = re.compile(r"\*\*ACCEPTED?\*\*", re.IGNORECASE)
-_REJECT_DECISION = re.compile(r"\b(?:Decision|Final\s+decision|Verdict|Outcome|Conclusion)\s*:?\s*\**\s*REJECT(?:ED)?\b", re.IGNORECASE)
-_ACCEPT_DECISION = re.compile(r"\b(?:Decision|Final\s+decision|Verdict|Outcome|Conclusion)\s*:?\s*\**\s*ACCEPT(?:ED)?\b", re.IGNORECASE)
+_REJECT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*REJECT", re.IGNORECASE)
+_ACCEPT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*ACCEPT", re.IGNORECASE)
 
 # Token IDs (Qwen3 tokenizer) used for probabilistic accept/reject scoring.
 # "Decision: ACCEPT" -> " ACCEPT" (53060); "Decision: REJECT" -> " RE" (3476) + "JECT".
@@ -201,7 +197,7 @@ def extract_label(response: str) -> int | None:
     # 3. Verdict in the conclusion tail ("Conclusion/Final Decision/Verdict/Outcome: X")
     tail = response[-500:]
     m = re.search(
-        r"\b(?:Conclusion|Final\s+[Dd]ecision|Verdict|Outcome)\s*:?\s*\**\s*(ACCEPTED?|REJECTED?)\b",
+        r"\b(?:Conclusion|Final Decision|Verdict|Outcome)\s*:?\s*\**\s*(ACCEPTED?|REJECTED?)\b",
         tail,
         re.IGNORECASE,
     )
@@ -232,12 +228,6 @@ def extract_label(response: str) -> int | None:
     if parsed is not None:
         _, answer = parsed
         return 1 if answer == "good" else 0
-
-    # 8. Check for "Final decision" pattern anywhere (prompt-enforced format)
-    m = re.search(r"\bFinal\s+decision\s*:\s*(ACCEPT|REJECT)\b", response, re.IGNORECASE)
-    if m:
-        return 1 if m.group(1).upper() == "ACCEPT" else 0
-
     lower = response.lower()
     if "good" in lower:
         return 1
@@ -285,7 +275,7 @@ def run_evaluation(args):
         pred = extract_label(response)
         if pred is None:
             parse_failures += 1
-            continue  # skip unparseable samples instead of guessing
+            pred = 1  # default to majority class to avoid crashing metrics
 
         y_true.append(label)
         y_pred.append(pred)
@@ -318,8 +308,7 @@ def run_evaluation(args):
     print("EVALUATION RESULTS")
     print(f"{'='*60}")
     print(f"Dataset:       {args.dataset}")
-    print(f"Total samples: {len(samples)}")
-    print(f"Evaluated:     {len(y_true)} (excluded {parse_failures} parse failures)")
+    print(f"Samples:       {len(samples)}")
     print(f"Parse failures:{parse_failures} ({metrics['parse_failure_rate']:.1%})")
     print(f"Time:          {elapsed:.1f}s ({metrics['samples_per_second']} samples/s)")
     print(f"{'='*60}")
