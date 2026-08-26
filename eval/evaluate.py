@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from eval.metrics import compute_all
 from data.reasoning_prompt import parse_response, SYSTEM_PROMPT, DATASET_INSTRUCTIONS
+from rl_grpo.prompts import SYSTEM_PROMPT as GRPO_SYSTEM_PROMPT
 
 DEFAULT_BASE_MODEL = "unsloth/Qwen3.5-9B"
 DEFAULT_ADAPTER_PATH = "outputs/qwen3.5-9b-sft"
@@ -25,23 +26,24 @@ RESULTS_DIR = Path("eval/results")
 GERMAN_V2_INSTRUCTION = (
     "You are an expert credit risk analyst. Analyze the following German Credit applicant "
     "profile and provide a detailed, step-by-step Chain-of-Thought (COT) explanation of why "
-    "this applicant should be accepted or rejected.\n"
-    "End your response with EXACTLY this line: Final decision: ACCEPT or Final decision: REJECT"
+    "this applicant should be accepted or rejected."
 )
 
-_REJECT_BOLD = re.compile(r"\*\*REJECTED?\*\*", re.IGNORECASE)
-_ACCEPT_BOLD = re.compile(r"\*\*ACCEPTED?\*\*", re.IGNORECASE)
-_REJECT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*REJECT", re.IGNORECASE)
-_ACCEPT_DECISION = re.compile(r"\bDecision\s*:?\s*\**\s*ACCEPT", re.IGNORECASE)
+_BOLD_VERDICT = re.compile(r"\*\*(ACCEPT|REJECT)(?:ED)?\*\*", re.IGNORECASE)
+_DECISION_LINE = re.compile(
+    r"\b(?:final\s+|my\s+)?decision\s*:?\s*\**\s*(ACCEPT|REJECT)(?:ED)?\b", re.IGNORECASE
+)
+_CONCLUSION_LINE = re.compile(
+    r"\b(?:conclusion|verdict|outcome|recommendation)s?\s*:?\s*\**\s*(ACCEPT|REJECT)(?:ED)?\b",
+    re.IGNORECASE,
+)
+_VERDICT_WORD = re.compile(r"\b(ACCEPT|REJECT)(?:S|ED|ING)?\b", re.IGNORECASE)
+_GOOD_BAD_WORD = re.compile(r"\b(good|bad)\b", re.IGNORECASE)
 
 # Token IDs (Qwen3 tokenizer) used for probabilistic accept/reject scoring.
 # "Decision: ACCEPT" -> " ACCEPT" (53060); "Decision: REJECT" -> " RE" (3476) + "JECT".
 _ACCEPT_TOKEN_IDS = {53060, 93997, 10024, 16156, 63681, 49999, 52742, 11330, 87247, 25503, 23890}
 _REJECT_TOKEN_IDS = {3476, 762, 45427, 75725, 84282, 7602, 92060, 75035, 17030, 57409, 60476}
-_REJECT_TO = re.compile(r"\bdecisions?\s+to\s+REJECT", re.IGNORECASE)
-_ACCEPT_TO = re.compile(r"\bdecisions?\s+to\s+ACCEPT", re.IGNORECASE)
-_REJECT_WORD = re.compile(r"\b(?:reject|rejects|rejected|rejecting)\b", re.IGNORECASE)
-_ACCEPT_WORD = re.compile(r"\b(?:accept|accepts|accepted|accepting)\b", re.IGNORECASE)
 
 
 def load_test_data(path: str, limit: int | None = None) -> list[dict]:
@@ -57,11 +59,44 @@ def load_test_data(path: str, limit: int | None = None) -> list[dict]:
     return samples
 
 
-def build_inference_prompt(text: str, dataset: str) -> str:
+def build_inference_prompt(text: str, dataset: str, grpo: bool = False) -> str:
+    if grpo:
+        # rl_grpo/train_grpo.py's build_dataset() uses the raw applicant text
+        # as the user turn, with every instruction carried in the system
+        # message instead -- match that exactly rather than layering
+        # GERMAN_V2_INSTRUCTION on top of it too.
+        return text
     if dataset == "german":
         return f"{GERMAN_V2_INSTRUCTION}\n\n{text}"
     instruction = DATASET_INSTRUCTIONS[dataset].format(text=text)
     return f"[System] {SYSTEM_PROMPT}\n\n{instruction}"
+
+
+def resolve_base_model(base_model_arg: str | None, adapter_path: str) -> str:
+    config_path = Path(adapter_path) / "adapter_config.json"
+    recorded = None
+    if config_path.exists():
+        try:
+            recorded = json.loads(config_path.read_text()).get("base_model_name_or_path")
+        except (json.JSONDecodeError, OSError):
+            recorded = None
+
+    if base_model_arg is None:
+        if recorded:
+            print(f"--base-model not given; using '{recorded}' from {config_path}")
+            return recorded
+        print(f"--base-model not given and {config_path} has no recorded base; "
+              f"falling back to default '{DEFAULT_BASE_MODEL}'")
+        return DEFAULT_BASE_MODEL
+
+    if recorded and recorded != base_model_arg:
+        print(f"!!! WARNING: --base-model '{base_model_arg}' does not match "
+              f"'{recorded}' recorded in {config_path}. Proceeding with the "
+              f"explicitly requested base model, but this adapter's LoRA "
+              f"weights were trained against a different base -- results are "
+              f"likely meaningless. Drop --base-model to auto-use the "
+              f"recorded one instead.")
+    return base_model_arg
 
 
 def load_model(base_model: str, adapter_path: str):
@@ -126,8 +161,12 @@ def generate_prediction(
     max_new_tokens: int = 1400,
     temperature: float = 0.1,
     greedy: bool = False,
+    system_prompt: str | None = None,
 ):
-    messages = [{"role": "user", "content": prompt}]
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
     )
@@ -179,61 +218,51 @@ def _verdict(match: re.Match) -> int:
     return 1 if word.startswith("accept") else 0
 
 
-def extract_label(response: str) -> int | None:
-    """Extract binary label (1=accept, 0=reject) from the model's reasoning text."""
-    # 1. Explicit bold verdict markers (highest confidence)
-    m = _REJECT_BOLD.search(response)
-    if m:
-        return 0
-    m = _ACCEPT_BOLD.search(response)
-    if m:
-        return 1
+def _last_match(pattern: re.Pattern, text: str) -> re.Match | None:
+    """Last match instead of first, over the FULL text (not just the tail).
+    See the module-level comment above the pattern definitions for why."""
+    m = None
+    for m in pattern.finditer(text):
+        pass
+    return m
 
-    # 2. "Decision: ..." lines
-    if _REJECT_DECISION.search(response):
-        return 0
-    if _ACCEPT_DECISION.search(response):
-        return 1
 
-    # 3. Verdict in the conclusion tail ("Conclusion/Final Decision/Verdict/Outcome: X")
-    tail = response[-500:]
-    m = re.search(
-        r"\b(?:Conclusion|Final Decision|Verdict|Outcome)\s*:?\s*\**\s*(ACCEPTED?|REJECTED?)\b",
-        tail,
-        re.IGNORECASE,
-    )
+def extract_label(response: str, accept_score: float | None = None) -> int | None:
+    """Extract binary label (1=accept, 0=reject) from the model's reasoning text.
+
+    Checked in order of confidence: labeled verdict markers (bold / "Decision:"
+    / "Conclusion:" etc., each via last-match) then a bare accept/reject word,
+    then legacy <answer> tags, then a bare good/bad word. If no textual
+    verdict is found at all, falls back to the model's own implicit
+    token-probability lean (accept_score) instead of silently guessing the
+    majority class -- the caller decides what to do if this still returns
+    None (that means even the logit lean was uninformative).
+    """
+    for pattern in (_BOLD_VERDICT, _DECISION_LINE, _CONCLUSION_LINE):
+        m = _last_match(pattern, response)
+        if m:
+            return _verdict(m)
+
+    m = _last_match(_VERDICT_WORD, response)
     if m:
         return _verdict(m)
 
-    # 4. "decision to ACCEPT/REJECT" phrasing in the opening statement
-    intro = response[:700]
-    if _REJECT_TO.search(intro):
-        return 0
-    if _ACCEPT_TO.search(intro):
-        return 1
-
-    # 5. Decision verb in the opening statement
-    if _REJECT_WORD.search(intro):
-        return 0
-    if _ACCEPT_WORD.search(intro):
-        return 1
-
-    # 6. Decision verb anywhere in the text
-    if _REJECT_WORD.search(response):
-        return 0
-    if _ACCEPT_WORD.search(response):
-        return 1
-
-    # 7. Fallback to legacy good/bad language
+    # Legacy <reasoning>/<answer> tag format.
     parsed = parse_response(response)
     if parsed is not None:
         _, answer = parsed
         return 1 if answer == "good" else 0
-    lower = response.lower()
-    if "good" in lower:
-        return 1
-    if "bad" in lower:
-        return 0
+
+    m = _last_match(_GOOD_BAD_WORD, response)
+    if m:
+        return 1 if m.group(1).lower() == "good" else 0
+
+    # Nothing textual to go on -- use the model's own logit lean if it has one
+    # (accept_score is 0.5 only when the tracked accept/reject tokens never
+    # showed meaningful probability mass anywhere in the generation).
+    if accept_score is not None and accept_score != 0.5:
+        return 1 if accept_score > 0.5 else 0
+
     return None
 
 
@@ -248,12 +277,15 @@ def run_evaluation(args):
         print("No test samples found. Exiting.")
         sys.exit(1)
 
-    model, tokenizer = load_model(args.base_model, args.adapter_path)
+    base_model = resolve_base_model(args.base_model, args.adapter_path)
+    model, tokenizer = load_model(base_model, args.adapter_path)
+    system_prompt = args.system_prompt or (GRPO_SYSTEM_PROMPT if args.grpo else None)
 
     y_true = []
     y_pred = []
     y_scores = []
-    parse_failures = 0
+    parse_failures = 0       # no textual verdict AND accept_score was uninformative
+    score_fallbacks = 0      # no textual verdict, but accept_score rescued it
     results_detail = []
 
     print(f"\nRunning inference on {len(samples)} samples...")
@@ -263,7 +295,7 @@ def run_evaluation(args):
         text = sample["text"]
         label = sample["target"]
 
-        prompt = build_inference_prompt(text, args.dataset)
+        prompt = build_inference_prompt(text, args.dataset, grpo=args.grpo)
         response, score = generate_prediction(
             model,
             tokenizer,
@@ -271,12 +303,23 @@ def run_evaluation(args):
             temperature=args.temperature,
             greedy=args.greedy,
             max_new_tokens=args.max_new_tokens,
+            system_prompt=system_prompt,
         )
 
-        pred = extract_label(response)
-        if pred is None:
+        text_pred = extract_label(response)  # text-only, for honest bookkeeping
+        pred = text_pred if text_pred is not None else extract_label(response, accept_score=score)
+        # Only a true failure if even the logit-lean fallback had nothing to
+        # go on. Track it honestly instead of silently writing a
+        # majority-class guess into predicted_label, and keep the sample in
+        # the metrics (dropping it would shrink the denominator and quietly
+        # inflate accuracy on whatever's left -- parse failures are not a
+        # random subset, they skew toward the model's worst outputs).
+        parse_failure = pred is None
+        if parse_failure:
             parse_failures += 1
-            pred = 1  # default to majority class to avoid crashing metrics
+            pred = 1  # default to majority class only as the last resort
+        elif text_pred is None:
+            score_fallbacks += 1
 
         y_true.append(label)
         y_pred.append(pred)
@@ -287,6 +330,8 @@ def run_evaluation(args):
             "text": text,
             "true_label": "good" if label == 1 else "bad",
             "predicted_label": "good" if pred == 1 else "bad",
+            "parse_failure": parse_failure,
+            "used_score_fallback": text_pred is None and not parse_failure,
             "accept_score": round(score, 6),
             "correct": label == pred,
             "raw_output": response,
@@ -301,6 +346,7 @@ def run_evaluation(args):
     metrics = compute_all(y_true, y_pred, y_scores)
     metrics["parse_failures"] = parse_failures
     metrics["parse_failure_rate"] = parse_failures / len(samples)
+    metrics["score_fallbacks"] = score_fallbacks
     metrics["total_samples"] = len(samples)
     metrics["elapsed_seconds"] = round(elapsed, 2)
     metrics["samples_per_second"] = round(len(samples) / elapsed, 4)
@@ -309,8 +355,11 @@ def run_evaluation(args):
     print("EVALUATION RESULTS")
     print(f"{'='*60}")
     print(f"Dataset:       {args.dataset}")
-    print(f"Samples:       {len(samples)}")
-    print(f"Parse failures:{parse_failures} ({metrics['parse_failure_rate']:.1%})")
+    print(f"Total samples: {len(samples)}")
+    print(f"Text-parsed:   {len(samples) - parse_failures - score_fallbacks}")
+    print(f"Score fallback:{score_fallbacks} (no textual verdict, used token-probability lean)")
+    print(f"Parse failures:{parse_failures} ({metrics['parse_failure_rate']:.1%}) "
+          f"-- defaulted to majority class, still counted in metrics below")
     print(f"Time:          {elapsed:.1f}s ({metrics['samples_per_second']} samples/s)")
     print(f"{'='*60}")
     print(metrics["classification_report"])
@@ -343,9 +392,29 @@ def run_evaluation(args):
 
 def main():
     parser = argparse.ArgumentParser(description="TabLens Evaluation Script")
-    parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL, help="Base model path")
+    parser.add_argument(
+        "--base-model", default=None,
+        help=f"Base model path. Default: auto-detected from the adapter's own "
+        f"adapter_config.json (base_model_name_or_path), falling back to "
+        f"'{DEFAULT_BASE_MODEL}' if that's missing. Pass explicitly to override.",
+    )
     parser.add_argument("--adapter-path", default=DEFAULT_ADAPTER_PATH, help="LoRA adapter path")
     parser.add_argument("--dataset", default=DEFAULT_DATASET, choices=["german", "loans"])
+    parser.add_argument(
+        "--grpo", action="store_true",
+        help="Evaluate a GRPO-trained checkpoint: prompts with "
+        "rl_grpo.prompts.SYSTEM_PROMPT as a system message and the raw "
+        "applicant text as the user turn, matching rl_grpo/train_grpo.py's "
+        "build_dataset() exactly instead of the plain-SFT prompt format.",
+    )
+    parser.add_argument(
+        "--system-prompt", default=None,
+        help="Ad hoc system-prompt override (e.g. to re-test a checkpoint "
+        "trained under an older/different SYSTEM_PROMPT than the current "
+        "one in rl_grpo/prompts.py). Overrides --grpo's default if both are "
+        "given. Use this instead of hand-editing GERMAN_V2_INSTRUCTION for a "
+        "one-off need -- that constant must stay matched to the SFT data.",
+    )
     parser.add_argument("--test-file", default=DEFAULT_TEST_FILE, help="Path to test JSONL")
     parser.add_argument("--limit", type=int, default=None, help="Max test samples to evaluate")
     parser.add_argument("--temperature", type=float, default=0.1, help="Generation temperature")

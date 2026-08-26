@@ -36,13 +36,30 @@ _VERDICT_PATTERNS = [
     re.compile(r"\b(ACCEPT|REJECT)(?:ED)?\b", re.IGNORECASE),
 ]
 
+def _last_match(pattern: "re.Pattern", text: str) -> Optional["re.Match"]:
+    """Last match instead of first, over the FULL completion. train_grpo.py's
+    SYSTEM_PROMPT asks for the verdict as the FIRST line ("Decision: ACCEPT",
+    matching the SFT target format), so the common case is exactly one match
+    right at the start -- first-match and last-match agree there. Last-match
+    only changes the outcome if the model hedges or restates itself later
+    ("Decision: REJECT... on reflection, Decision: ACCEPT"), in which case the
+    later statement is the one that should count. A first-match, front-to-back
+    search let an earlier hedge outscore the real verdict, which corrupted the
+    GRPO advantage signal directly (this is the training-time reward, not just
+    an eval metric).
+    """
+    m = None
+    for m in pattern.finditer(text):
+        pass
+    return m
+
 
 def extract_verdict(text: str) -> Optional[str]:
     """Return 'accept' / 'reject' if the completion contains a clear verdict."""
     if not text:
         return None
     for pattern in _VERDICT_PATTERNS:
-        m = pattern.search(text)
+        m = _last_match(pattern, text)
         if m:
             return "accept" if m.group(1).lower().startswith("accept") else "reject"
     return None

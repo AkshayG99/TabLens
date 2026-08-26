@@ -55,14 +55,7 @@ from trl import GRPOConfig, GRPOTrainer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rewards import credit_reward_fn, extract_verdict, score_completion  # noqa: E402
-
-SYSTEM_PROMPT = (
-    "You are a credit risk analyst for a bank. Review the applicant profile below "
-    "and assess whether the loan application should be approved.\n"
-    "Reason step by step, concisely.\n"
-    "End your response with a final line of exactly 'Final decision: ACCEPT' "
-    "or 'Final decision: REJECT'."
-)
+from prompts import SYSTEM_PROMPT  # noqa: E402
 
 PROFILES = {
     "a6000": dict(  # RTX A6000 48GB / similar 40-48GB cards
@@ -73,7 +66,17 @@ PROFILES = {
         per_device_batch=16,   # completions per fwd/bwd; must be a multiple of num_generations
         grad_accum=2,          # -> effective batch 32 completions = 4 prompts x 8 gens
         max_prompt_length=1024,
-        max_completion_length=512,
+        # Was 512: checkpoint-100's own trainer_state.json shows
+        # completions/clipped_ratio == 1.0 and mean_terminated_length == 0.0
+        # on every single logged step -- literally no rollout ever reached a
+        # natural stop at 512, so (with mask_truncated_completions=True below)
+        # ~every completion was masked out of the loss the whole run. SFT
+        # completions average ~1100-1350 tokens before concluding, so bump
+        # toward that. Watch VRAM: the lm_head logprob pass materializes
+        # batch x seq_len x 248k-vocab logits, i.e. cost scales ~linearly
+        # with this value. Run the smoke test first; drop back toward 512 if
+        # it OOMs before a real run.
+        max_completion_length=1024,
         lr=1e-5,
         optim="adamw_torch_fused",
     ),
@@ -85,7 +88,11 @@ PROFILES = {
         per_device_batch=4,
         grad_accum=8,          # -> effective batch 32 completions = 8 prompts x 4 gens
         max_prompt_length=1024,
-        max_completion_length=512,
+        # Was 512, same zero-natural-termination problem as the a6000 profile
+        # above. Smaller bump than a6000 (768 vs 1024) since this card already
+        # OOMed once at the wider rollout width above and has less headroom
+        # for the lm_head logprob pass; tune down further if it OOMs.
+        max_completion_length=768,
         lr=1e-5,
         optim="adamw_bnb_8bit",
     ),
@@ -100,7 +107,9 @@ PROFILES = {
         per_device_batch=2,
         grad_accum=8,          # -> effective batch 16 completions = 8 prompts x 2 gens
         max_prompt_length=512,
-        max_completion_length=384,
+        # Was 384, same zero-natural-termination problem, smallest bump of
+        # the three profiles -- this card has the least VRAM headroom.
+        max_completion_length=512,
         lr=1e-5,
         # NOT paged_*: bnb's own tests skip paged optimizers on win32
         # (unified-memory paging hangs WDDM at teardown).
