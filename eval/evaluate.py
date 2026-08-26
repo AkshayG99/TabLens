@@ -25,7 +25,8 @@ RESULTS_DIR = Path("eval/results")
 GERMAN_V2_INSTRUCTION = (
     "You are an expert credit risk analyst. Analyze the following German Credit applicant "
     "profile and provide a detailed, step-by-step Chain-of-Thought (COT) explanation of why "
-    "this applicant should be accepted or rejected."
+    "this applicant should be accepted or rejected.\n"
+    "End your response with EXACTLY this line: Final decision: ACCEPT or Final decision: REJECT"
 )
 
 _REJECT_BOLD = re.compile(r"\*\*REJECTED?\*\*", re.IGNORECASE)
