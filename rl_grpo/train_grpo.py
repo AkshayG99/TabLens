@@ -20,6 +20,7 @@ Examples:
 """
 
 import argparse
+import functools
 import json
 import os
 import sys
@@ -51,6 +52,7 @@ for _attr in [a for a in dir(_trl_import_utils) if a.startswith("_") and a.endsw
     setattr(_trl_import_utils, _attr,
             _pkg_installed(_attr[1:-len("_available")]))
 
+from transformers import TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -127,9 +129,16 @@ def parse_args():
                    help="Override profile quantization")
     p.add_argument("--train-file", default="data/processed/german_v2/train.jsonl")
     p.add_argument("--val-file", default="data/processed/german_v2/val.jsonl")
+    p.add_argument("--no-eval", action="store_true",
+                   help="Skip validation entirely (train-only, no checkpoint selection)")
     p.add_argument("--output-dir", default=None,
                    help="Default: outputs/grpo/<model-name>-<profile>")
     p.add_argument("--train-limit", type=int, default=None, help="Cap train rows (smoke tests)")
+    p.add_argument("--val-limit", type=int, default=None, help="Cap val rows (smoke tests)")
+    p.add_argument("--eval-steps", type=int, default=25,
+                   help="Run validation every N steps and track eval_reward for checkpoint "
+                   "selection. Must evenly divide --save-steps (HF Trainer requirement for "
+                   "load_best_model_at_end).")
     p.add_argument("--minority-weight", type=float, default=1.5,
                    help="Reward multiplier when ground truth is REJECT (minority class)")
     # Hyperparameter overrides (rarely needed; profiles are tuned already)
@@ -146,6 +155,36 @@ def parse_args():
     p.add_argument("--use-vllm", action="store_true",
                    help="Colocated vLLM generation (only if installed vLLM supports this arch)")
     return p.parse_args()
+
+
+class ZeroLossGuard(TrainerCallback):
+    """Aborts training if loss stays exactly 0.0 for too many consecutive
+    logged steps -- the signature of every rollout getting clipped by
+    max_completion_length and then masked out of the loss. checkpoint-100's
+    trainer_state.json showed loss == 0.0 on all 100 of its logged steps,
+    meaning it received ~zero effective gradient the entire run, discovered
+    only after the fact by reading the log post-hoc. Fail fast instead: a
+    real GRPO loss is a continuous float, so several exact 0.0s in a row this
+    early isn't noise.
+    """
+
+    def __init__(self, patience: int = 10):
+        self.patience = patience
+        self._zero_streak = 0
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not state.is_local_process_zero or logs is None or "loss" not in logs:
+            return
+        self._zero_streak = self._zero_streak + 1 if logs["loss"] == 0.0 else 0
+        if self._zero_streak >= self.patience:
+            raise RuntimeError(
+                f"loss has been exactly 0.0 for {self._zero_streak} consecutive logged "
+                f"steps -- almost certainly every rollout is being clipped by "
+                f"max_completion_length and masked out of the loss. Check "
+                f"completions/clipped_ratio and completions/mean_terminated_length in "
+                f"the logs above; if clipped_ratio is ~1.0, raise max_completion_length "
+                f"or make the model's reasoning shorter via the prompt before retrying."
+            )
 
 
 def build_dataset(path, limit=None):
@@ -199,12 +238,22 @@ def main():
         raise SystemExit(
             f"per-device batch ({per_device}) must be divisible by num_generations ({n_gens})"
         )
+    if not args.no_eval and args.save_steps % args.eval_steps != 0:
+        raise SystemExit(
+            f"--save-steps ({args.save_steps}) must be evenly divisible by --eval-steps "
+            f"({args.eval_steps}) -- HF Trainer requires this for load_best_model_at_end. "
+            f"Pass --no-eval to skip validation instead."
+        )
 
     print(f"[env] torch {torch.__version__} | cuda {torch.version.cuda} | gpu {torch.cuda.get_device_name(0)}")
 
     output_dir = args.output_dir or f"outputs/grpo/{os.path.basename(args.model.rstrip('/'))}-{args.profile}"
     train_ds = build_dataset(args.train_file, args.train_limit)
     print(f"[data] {len(train_ds)} train rows from {args.train_file}")
+    val_ds = None
+    if not args.no_eval:
+        val_ds = build_dataset(args.val_file, args.val_limit)
+        print(f"[data] {len(val_ds)} val rows from {args.val_file}")
 
     model_init_kwargs = {"torch_dtype": "bfloat16"}
     if prof["quantize"] == "4bit":
@@ -225,8 +274,25 @@ def main():
         max_completion_length=prof["max_completion_length"],
         temperature=1.0,
         top_p=1.0,
-        mask_truncated_completions=True,
-        # Loss: no KL/ref model (same choice as the DisCO config, saves ~18GB)
+        # Was True. SYSTEM_PROMPT now asks for the verdict as the FIRST line,
+        # so a truncated completion (didn't reach EOS within
+        # max_completion_length) almost always still contains a scorable
+        # verdict -- only the reasoning tail got cut off. Masking it out of
+        # the loss entirely (the old behavior) discarded that reward signal
+        # even when the completion was correct, which combined with
+        # max_completion_length historically being far below the model's
+        # natural response length meant most batches got ~zero effective
+        # gradient (see checkpoint-100's trainer_state.json: clipped_ratio
+        # 1.0 and loss 0.0 on every one of its 100 logged steps).
+        mask_truncated_completions=False,
+        # Loss: no KL/ref model (same choice as the DisCO config, saves ~18GB).
+        # This means nothing bounds how far the policy can drift from the SFT
+        # prior during training -- a real risk with temperature=1.0/top_p=1.0
+        # rollout and no reference model, just not one fixed here: enabling it
+        # means loading a second full model copy, which the tighter profiles
+        # (24g especially) do not have headroom for. Revisit if training
+        # proves unstable (reward collapsing, degenerate output) rather than
+        # turning it on preemptively.
         beta=0.0,
         # Optimization
         learning_rate=prof["lr"],
@@ -247,6 +313,20 @@ def main():
         report_to="none",
         log_completions=False,
     )
+    if val_ds is not None:
+        # eval_reward is TRL's own metric name (mean reward, "eval_" prefixed
+        # in eval mode the same way "reward" is prefixed in train mode) --
+        # verified against trl==0.24.0's GRPOTrainer.log() before relying on
+        # it, since a wrong metric_for_best_model name here is a KeyError at
+        # the end of a long run, not something you find in a smoke test.
+        cfg_kwargs.update(
+            eval_strategy="steps",
+            eval_steps=args.eval_steps,
+            per_device_eval_batch_size=per_device,
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_reward",
+            greater_is_better=True,
+        )
     if args.use_vllm:
         cfg_kwargs.update(
             use_vllm=True, vllm_mode="colocate", vllm_gpu_memory_utilization=0.25
@@ -263,11 +343,23 @@ def main():
     if not hasattr(lm, "warnings_issued"):
         lm.warnings_issued = {}
 
+    # credit_reward_fn accepts minority_weight but GRPOTrainer calls
+    # reward_funcs with only (completions, prompts=..., **dataset_columns) --
+    # bind --minority-weight here via a thin wrapper rather than a bare
+    # functools.partial (TRL reads reward_funcs[i].__name__ for metric keys
+    # like "rewards/credit_reward_fn/mean"; a partial object has no
+    # __name__ and would crash trainer construction).
+    def reward_fn(completions, prompts=None, target=None, **kwargs):
+        return credit_reward_fn(completions, prompts=prompts, target=target,
+                                 minority_weight=args.minority_weight, **kwargs)
+    reward_fn.__name__ = "credit_reward_fn"
+
     trainer = GRPOTrainer(
         model=lm,
-        reward_funcs=credit_reward_fn,
+        reward_funcs=reward_fn,
         args=cfg,
         train_dataset=train_ds,
+        eval_dataset=val_ds,
         # Text-only model: pass the tokenizer explicitly. Without this, TRL
         # calls AutoProcessor, which resolves to the multimodal Qwen3.5
         # processor and demands a preprocessor_config.json we don't ship.
@@ -280,6 +372,7 @@ def main():
             task_type="CAUSAL_LM",
             target_modules="all-linear",
         ),
+        callbacks=[ZeroLossGuard()],
     )
 
     # peft.prepare_model_for_kbit_training upcasts every non-quantized param

@@ -107,19 +107,27 @@ def _completion_to_text(completion: Union[str, List[dict]]) -> str:
     return "\n".join(parts)
 
 
-def credit_reward_fn(completions, prompts=None, target=None, **kwargs):
+def credit_reward_fn(completions, prompts=None, target=None, minority_weight: float = MINORITY_WEIGHT,
+                      **kwargs):
     """TRL-compatible reward function.
 
     Signature: (completions, prompts=None, **dataset_columns). The dataset's
     `target` column is forwarded automatically by GRPOTrainer as a list.
     Returns a list of floats, one per completion.
+
+    minority_weight defaults to the TABLENS_MINORITY_WEIGHT env var, but
+    accepts an explicit override -- train_grpo.py binds --minority-weight
+    here via functools.partial so the CLI flag actually does something
+    (previously it was parsed and silently dropped: GRPOTrainer was handed
+    credit_reward_fn directly with no argument binding, so any --minority-weight
+    value never reached score_completion).
     """
     if target is None:
         target = [None] * len(completions)
     rewards = []
     for completion, gt in zip(completions, target):
         text = _completion_to_text(completion)
-        r = score_completion(text, gt)
+        r = score_completion(text, gt, minority_weight=minority_weight)
         rewards.append(r)
         if DEBUG:
             print(f"[reward] gt={gt} pred={extract_verdict(text)} -> {r:.3f}")
