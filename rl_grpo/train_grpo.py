@@ -129,16 +129,24 @@ def parse_args():
                    help="Override profile quantization")
     p.add_argument("--train-file", default="data/processed/german_v2/train.jsonl")
     p.add_argument("--val-file", default="data/processed/german_v2/val.jsonl")
-    p.add_argument("--no-eval", action="store_true",
-                   help="Skip validation entirely (train-only, no checkpoint selection)")
+    p.add_argument("--eval", action="store_true",
+                   help="Opt in to periodic validation. OFF by default: a GRPO eval pass "
+                   "generates num_generations completions for EVERY val row, same cost as a "
+                   "train step -- one pass over the full 100-row val set took >2h in one run, "
+                   "and with the default --eval-steps 25 that fires before most runs even "
+                   "reach --save-steps 50. Use --val-limit to shrink it if you opt in.")
     p.add_argument("--output-dir", default=None,
                    help="Default: outputs/grpo/<model-name>-<profile>")
     p.add_argument("--train-limit", type=int, default=None, help="Cap train rows (smoke tests)")
-    p.add_argument("--val-limit", type=int, default=None, help="Cap val rows (smoke tests)")
+    p.add_argument("--val-limit", type=int, default=None,
+                   help="Cap val rows -- strongly recommended if you pass --eval at all")
     p.add_argument("--eval-steps", type=int, default=25,
-                   help="Run validation every N steps and track eval_reward for checkpoint "
-                   "selection. Must evenly divide --save-steps (HF Trainer requirement for "
-                   "load_best_model_at_end).")
+                   help="Run validation every N steps; eval_reward shows up in the logs for you "
+                   "to read, but is NOT used for automatic checkpoint selection (no "
+                   "load_best_model_at_end -- GRPOTrainer's custom reward metrics never reach "
+                   "the metrics dict Trainer's own best-checkpoint logic reads, so wiring that "
+                   "up is a guaranteed KeyError, not a maybe). Pick the best checkpoint "
+                   "yourself from the logged eval_reward values.")
     p.add_argument("--minority-weight", type=float, default=1.5,
                    help="Reward multiplier when ground truth is REJECT (minority class)")
     # Hyperparameter overrides (rarely needed; profiles are tuned already)
@@ -238,20 +246,13 @@ def main():
         raise SystemExit(
             f"per-device batch ({per_device}) must be divisible by num_generations ({n_gens})"
         )
-    if not args.no_eval and args.save_steps % args.eval_steps != 0:
-        raise SystemExit(
-            f"--save-steps ({args.save_steps}) must be evenly divisible by --eval-steps "
-            f"({args.eval_steps}) -- HF Trainer requires this for load_best_model_at_end. "
-            f"Pass --no-eval to skip validation instead."
-        )
-
     print(f"[env] torch {torch.__version__} | cuda {torch.version.cuda} | gpu {torch.cuda.get_device_name(0)}")
 
     output_dir = args.output_dir or f"outputs/grpo/{os.path.basename(args.model.rstrip('/'))}-{args.profile}"
     train_ds = build_dataset(args.train_file, args.train_limit)
     print(f"[data] {len(train_ds)} train rows from {args.train_file}")
     val_ds = None
-    if not args.no_eval:
+    if args.eval:
         val_ds = build_dataset(args.val_file, args.val_limit)
         print(f"[data] {len(val_ds)} val rows from {args.val_file}")
 
@@ -314,18 +315,25 @@ def main():
         log_completions=False,
     )
     if val_ds is not None:
-        # eval_reward is TRL's own metric name (mean reward, "eval_" prefixed
-        # in eval mode the same way "reward" is prefixed in train mode) --
-        # verified against trl==0.24.0's GRPOTrainer.log() before relying on
-        # it, since a wrong metric_for_best_model name here is a KeyError at
-        # the end of a long run, not something you find in a smoke test.
+        # Monitoring only -- do NOT wire load_best_model_at_end/
+        # metric_for_best_model here. GRPOTrainer.log() merges its custom
+        # reward stats ("eval_reward" etc.) into what gets PRINTED/logged,
+        # but that merge happens on a local dict inside log() and is never
+        # written back into output.metrics -- the dict Trainer.evaluate()
+        # actually returns and that _determine_best_metric indexes into.
+        # GRPOTrainer doesn't override evaluate() at all (checked against
+        # trl==0.24.0 source), so that dict only ever has the base keys
+        # (eval_loss, eval_runtime, ...). metric_for_best_model="eval_reward"
+        # was previously set here and is a guaranteed KeyError on every run
+        # that includes eval -- confirmed live after a ~2h eval pass crashed
+        # with exactly that, discarding the run with no checkpoint saved.
+        # eval_reward still appears in the console/log output during
+        # training for you to read; there's just no automatic "pick the best
+        # one" -- you do that manually from the logs after the run.
         cfg_kwargs.update(
             eval_strategy="steps",
             eval_steps=args.eval_steps,
             per_device_eval_batch_size=per_device,
-            load_best_model_at_end=True,
-            metric_for_best_model="eval_reward",
-            greater_is_better=True,
         )
     if args.use_vllm:
         cfg_kwargs.update(
