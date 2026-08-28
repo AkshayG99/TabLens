@@ -61,7 +61,7 @@ from prompts import SYSTEM_PROMPT  # noqa: E402
 
 PROFILES = {
     "a6000": dict(  # RTX A6000 48GB / similar 40-48GB cards
-        quantize="none",
+        quantize="4bit",
         lora_rank=32,
         lora_alpha=64,
         num_generations=8,
@@ -156,6 +156,13 @@ def parse_args():
     p.add_argument("--lora-rank", type=int, default=None)
     p.add_argument("--lora-alpha", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
+    p.add_argument("--max-completion-length", type=int, default=None,
+                   help="Override profile's rollout token budget. Directly trades off against "
+                   "both memory (lm_head logprob pass scales with this) and wall-clock "
+                   "(shorter generations finish faster) -- the two things you're usually "
+                   "tuning for when nothing else is left to cut.")
+    p.add_argument("--max-prompt-length", type=int, default=None,
+                   help="Override profile's prompt token budget.")
     p.add_argument("--epochs", type=float, default=1.0)
     p.add_argument("--max-steps", type=int, default=-1)
     p.add_argument("--save-steps", type=int, default=50)
@@ -235,7 +242,9 @@ def main():
                      ("grad_accum", "grad_accum"),
                      ("lora_rank", "lora_rank"),
                      ("lora_alpha", "lora_alpha"),
-                     ("lr", "lr")]:
+                     ("lr", "lr"),
+                     ("max_completion_length", "max_completion_length"),
+                     ("max_prompt_length", "max_prompt_length")]:
         override = getattr(args, arg)
         if override is not None:
             prof[key] = override
@@ -266,6 +275,15 @@ def main():
             bnb_4bit_compute_dtype=torch.bfloat16,
         )
 
+    liger_available = _pkg_installed("liger_kernel")
+    if liger_available:
+        print("[env] liger_kernel found -- using LigerFusedLinearGRPOLoss "
+              "(avoids materializing full-vocab logits, the actual OOM cause)")
+    else:
+        print("[env] liger_kernel NOT installed -- falling back to the standard GRPO loss. "
+              "`pip install liger-kernel` (pure triton, no build) to fix the largest memory "
+              "spike in this profile; SFT already depends on it successfully on this hardware.")
+
     cfg_kwargs = dict(
         output_dir=output_dir,
         seed=args.seed,
@@ -295,6 +313,7 @@ def main():
         # proves unstable (reward collapsing, degenerate output) rather than
         # turning it on preemptively.
         beta=0.0,
+        use_liger_loss=liger_available,
         # Optimization
         learning_rate=prof["lr"],
         lr_scheduler_type="constant_with_warmup",

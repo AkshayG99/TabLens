@@ -19,6 +19,10 @@ fi
 
 MODEL_PATH="${MODEL_PATH:-creativelapse/qwen3.5-9b-merged}"
 
+"$PYTHON" -m pip show liger-kernel >/dev/null 2>&1 || "$PYTHON" -m pip install liger-kernel
+"$PYTHON" -m pip show causal-conv1d >/dev/null 2>&1 || "$PYTHON" -m pip install causal-conv1d --no-build-isolation
+"$PYTHON" -m pip show flash-linear-attention >/dev/null 2>&1 || "$PYTHON" -m pip install flash-linear-attention --no-build-isolation
+
 mkdir -p logs
 "$PYTHON" rl_grpo/train_grpo.py \
     --model "$MODEL_PATH" \
