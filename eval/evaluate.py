@@ -119,22 +119,33 @@ def load_model(base_model: str, adapter_path: str):
     )
     # unsloth/Qwen3.5-9B is a multimodal wrapper (Qwen3_5ForConditionalGeneration).
     # Training targeted model.language_model.layers.*, so we must load the same
-    # wrapper or the LoRA weights won't map. Fall back to CausalLM if unavailable.
-    loader = AutoModelForImageTextToText if AutoModelForImageTextToText is not None else AutoModelForCausalLM
-    base = loader.from_pretrained(
-        base_model,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
-    )
-    if not hasattr(base, "model") or not hasattr(base.model, "language_model"):
-        print("Wrapper lacks language_model; retrying with AutoModelForCausalLM...")
-        base = AutoModelForCausalLM.from_pretrained(
+    # wrapper or the LoRA weights won't map. Fall back to CausalLM if unavailable
+    # (e.g. a merged text-only base whose config rejects the image-text loader).
+    def _load_causallm():
+        print("Retrying with AutoModelForCausalLM...")
+        return AutoModelForCausalLM.from_pretrained(
             base_model,
             quantization_config=bnb_config,
             device_map="auto",
             trust_remote_code=True,
         )
+
+    try:
+        base = AutoModelForImageTextToText.from_pretrained(
+            base_model,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        if not hasattr(base, "model") or not hasattr(base.model, "language_model"):
+            print("Wrapper lacks language_model; retrying with AutoModelForCausalLM...")
+            base = _load_causallm()
+    except ValueError as e:
+        if "Unrecognized configuration class" in str(e):
+            print("Image-text loader rejected the config; retrying with AutoModelForCausalLM...")
+            base = _load_causallm()
+        else:
+            raise
 
     print(f"Attaching LoRA adapter from {adapter_path}...")
     with warnings.catch_warnings(record=True) as caught:
