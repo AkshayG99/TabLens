@@ -156,6 +156,7 @@ def parse_args():
     p.add_argument("--lora-rank", type=int, default=None)
     p.add_argument("--lora-alpha", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
+    p.add_argument("--beta", type=float, default=0.0)
     p.add_argument("--max-completion-length", type=int, default=None,
                    help="Override profile's rollout token budget. Directly trades off against "
                    "both memory (lm_head logprob pass scales with this) and wall-clock "
@@ -304,15 +305,7 @@ def main():
         # gradient (see checkpoint-100's trainer_state.json: clipped_ratio
         # 1.0 and loss 0.0 on every one of its 100 logged steps).
         mask_truncated_completions=False,
-        # Loss: no KL/ref model (same choice as the DisCO config, saves ~18GB).
-        # This means nothing bounds how far the policy can drift from the SFT
-        # prior during training -- a real risk with temperature=1.0/top_p=1.0
-        # rollout and no reference model, just not one fixed here: enabling it
-        # means loading a second full model copy, which the tighter profiles
-        # (24g especially) do not have headroom for. Revisit if training
-        # proves unstable (reward collapsing, degenerate output) rather than
-        # turning it on preemptively.
-        beta=0.0,
+        beta=args.beta,
         use_liger_loss=liger_available,
         # Optimization
         learning_rate=prof["lr"],

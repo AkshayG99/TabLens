@@ -1,28 +1,3 @@
-{
-  "pr_auc": 0.7028693613117574,
-  "roc_auc": 0.4414285714285714,
-  "f2": 0.6086956521739131,
-  "mcc": -0.16012815380508713,
-  "f1": 0.6222222222222222,
-  "f1_weighted": 0.5001709401709402,
-  "accuracy": 0.49,
-  "precision": 0.6461538461538462,
-  "recall": 0.6,
-  "confusion_matrix": [
-    [
-      7,
-      23
-    ],
-    [
-      28,
-      42
-    ]
-  ],
-  "parse_failures": 0,
-  "parse_failure_rate": 0.0,
-  "score_fallbacks": 0,
-  "total_samples": 100,
-  "elapsed_seconds": 1555.72,
-  "samples_per_second": 0.0643,
-  "classification_report": "              precision    recall  f1-score   support\n\n         bad       0.20      0.23      0.22        30\n        good       0.65      0.60      0.62        70\n\n    accuracy                           0.49       100\n   macro avg       0.42      0.42      0.42       100\nweighted avg       0.51      0.49      0.50       100\n"
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:f34bb2dc5af191f6b83291bfe29faa0cb6480bdb930d2adca51b3856796733ca
+size 881
