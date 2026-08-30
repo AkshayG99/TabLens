@@ -2,6 +2,8 @@
 rem DisCO GRPO fine-tuning - Windows, mirrors run_disco.sh.
 rem Model defaults to creativelapse/qwen3.5-9b-merged; set MODEL_PATH to a
 rem local folder (outputs\...) to use it. Extra args pass through to the script.
+rem Causal-conv1d/flash-linear-attention are checked, not installed, mirroring
+rem run_disco.sh -- they belong in requirements.txt. Only warn if missing.
 rem   run_disco.bat --num-generations 4 --per-device-batch 4 --grad-accum 8
 
 setlocal
@@ -20,10 +22,18 @@ if /i "%PATH_PREFIX%"=="outputs\" if not exist "%MODEL_PATH%\" (
     set MODEL_PATH=%HF_DEFAULT%
 )
 
+for %%p in (causal-conv1d flash-linear-attention) do (
+    python -m pip show %%p >nul 2>&1 || echo [run_disco] [warn] %%p not installed -- `pip install -r requirements.txt` to fix ^(costs speed, not correctness, if skipped^)
+)
+
 if not exist logs mkdir logs
 set LOGFILE=logs\disco_run_%date:~-4%%date:~4,2%%date:~7,2%_%time:~0,2%%time:~3,2%%time:~6,2%.log
 set LOGFILE=%LOGFILE: =0%
 
+set GPU_NAME=n/a
+for /f "tokens=1,2 delims=," %%a in ('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2^>nul') do set GPU_NAME=%%a, %%b
+
+echo [run_disco] gpu   : %GPU_NAME%
 echo [run_disco] model : %MODEL_PATH%
 echo [run_disco] log   : %LOGFILE%
 
