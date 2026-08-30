@@ -58,6 +58,7 @@ from trl import GRPOConfig, GRPOTrainer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rewards import credit_reward_fn, extract_verdict, score_completion  # noqa: E402
 from prompts import SYSTEM_PROMPT  # noqa: E402
+from disco_trainer import DiscoGRPOTrainer  # noqa: E402
 
 PROFILES = {
     "a6000": dict(  # RTX A6000 48GB / similar 40-48GB cards
@@ -157,6 +158,22 @@ def parse_args():
     p.add_argument("--lora-alpha", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--beta", type=float, default=0.0)
+    p.add_argument("--disco", action="store_true")
+    p.add_argument("--disco-score-func", choices=["logL", "Lratio"], default="logL",
+                   help="logL: mean log-likelihood under the current policy. Lratio: mean "
+                   "importance ratio vs the old policy. Paper recommends tau=10 for logL, "
+                   "tau=1 for Lratio -- change --disco-tau to match if you switch this.")
+    p.add_argument("--disco-delta", type=float, default=1e-4,
+                   help="Target KL-divergence ceiling for DisCO's constraint term.")
+    p.add_argument("--disco-beta", type=float, default=1e3,
+                   help="DisCO's adaptive constraint penalty weight -- NOT the same thing as "
+                   "--beta (TRL's linear GRPO KL coefficient); the two are independent "
+                   "hyperparameters from different papers that happen to share a name. Not "
+                   "validated for this task -- the paper tuned this for math reasoning "
+                   "benchmarks, treat it as a starting point.")
+    p.add_argument("--disco-tau", type=float, default=10.0,
+                   help="Temperature for DisCO's soft-max aggregation over negative responses' "
+                   "scores within a group.")
     p.add_argument("--max-completion-length", type=int, default=None,
                    help="Override profile's rollout token budget. Directly trades off against "
                    "both memory (lm_head logprob pass scales with this) and wall-clock "
@@ -276,8 +293,19 @@ def main():
             bnb_4bit_compute_dtype=torch.bfloat16,
         )
 
-    liger_available = _pkg_installed("liger_kernel")
-    if liger_available:
+    if args.disco and n_gens < 2:
+        raise SystemExit(
+            f"--disco needs --num-generations >= 2 (got {n_gens}). A group of 1 can never "
+            f"contain both a correct and incorrect response, so DisCO's pos/neg contrast has "
+            f"nothing to work with -- this is the exact misconfiguration that gave the original "
+            f"verl DisCO attempt zero learning signal. See rl_grpo/disco_loss.py's docstring."
+        )
+
+    liger_available = _pkg_installed("liger_kernel") and not args.disco
+    if args.disco:
+        print("[env] --disco set -- using DiscoGRPOTrainer (rl_grpo/disco_trainer.py), "
+              "use_liger_loss forced off (no DisCO-flavored fused kernel exists)")
+    elif liger_available:
         print("[env] liger_kernel found -- using LigerFusedLinearGRPOLoss "
               "(avoids materializing full-vocab logits, the actual OOM cause)")
     else:
@@ -374,7 +402,8 @@ def main():
                                  minority_weight=args.minority_weight, **kwargs)
     reward_fn.__name__ = "credit_reward_fn"
 
-    trainer = GRPOTrainer(
+    trainer_cls = DiscoGRPOTrainer if args.disco else GRPOTrainer
+    trainer_kwargs = dict(
         model=lm,
         reward_funcs=reward_fn,
         args=cfg,
@@ -394,6 +423,14 @@ def main():
         ),
         callbacks=[ZeroLossGuard()],
     )
+    if args.disco:
+        trainer_kwargs.update(
+            disco_score_func=args.disco_score_func,
+            disco_delta=args.disco_delta,
+            disco_beta=args.disco_beta,
+            disco_tau=args.disco_tau,
+        )
+    trainer = trainer_cls(**trainer_kwargs)
 
     # peft.prepare_model_for_kbit_training upcasts every non-quantized param
     # to fp32. Two problems on a 12 GB card: (1) qwen3_5's linear-attention
