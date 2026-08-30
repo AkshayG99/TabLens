@@ -53,6 +53,26 @@ class DiscoGRPOTrainer(GRPOTrainer):
         uid = torch.arange(batch_size, device=binary_rewards.device) // num_generations
 
         output["advantages"] = torch.stack([binary_rewards, uid.float()], dim=1)
+
+        with torch.no_grad():
+            prompt_ids, prompt_mask = output["prompt_ids"], output["prompt_mask"]
+            completion_ids, completion_mask = output["completion_ids"], output["completion_mask"]
+            input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
+            attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
+            old_per_token_logps, _ = self._get_per_token_logps_and_entropies(
+                self.model,
+                input_ids,
+                attention_mask,
+                completion_ids.size(1),
+                compute_entropy=False,
+                pixel_values=output.get("pixel_values"),
+                image_grid_thw=output.get("image_grid_thw"),
+                num_images=output.get("num_images"),
+                pixel_attention_mask=output.get("pixel_attention_mask"),
+                image_sizes=output.get("image_sizes"),
+                token_type_ids=output.get("token_type_ids"),
+            )
+        output["old_per_token_logps"] = old_per_token_logps
         return output
 
     def _prepare_inputs(self, generation_batch):

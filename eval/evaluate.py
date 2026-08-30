@@ -242,21 +242,24 @@ def extract_label(response: str, accept_score: float | None = None) -> int | Non
     """Extract binary label (1=accept, 0=reject) from the model's reasoning text.
 
     Checked in order of confidence: labeled verdict markers (bold / "Decision:"
-    / "Conclusion:" etc., each via last-match) then a bare accept/reject word,
-    then legacy <answer> tags, then a bare good/bad word. If no textual
+    / "Conclusion:" etc.) and a bare accept/reject word are compared against
+    each other by TEXT POSITION (not tier priority) -- picking "the first
+    tier with any match" would mean a restatement in a lower-priority tier
+    could never win even if it came later. E.g. "Decision: ACCEPT. On
+    reflection I REJECT this." must resolve to reject, not accept. Falls
+    through to legacy <answer> tags, then a bare good/bad word. If no textual
     verdict is found at all, falls back to the model's own implicit
     token-probability lean (accept_score) instead of silently guessing the
     majority class -- the caller decides what to do if this still returns
     None (that means even the logit lean was uninformative).
     """
-    for pattern in (_BOLD_VERDICT, _DECISION_LINE, _CONCLUSION_LINE):
+    best_match = None
+    for pattern in (_BOLD_VERDICT, _DECISION_LINE, _CONCLUSION_LINE, _VERDICT_WORD):
         m = _last_match(pattern, response)
-        if m:
-            return _verdict(m)
-
-    m = _last_match(_VERDICT_WORD, response)
-    if m:
-        return _verdict(m)
+        if m is not None and (best_match is None or m.end() > best_match.end()):
+            best_match = m
+    if best_match is not None:
+        return _verdict(best_match)
 
     # Legacy <reasoning>/<answer> tag format.
     parsed = parse_response(response)
