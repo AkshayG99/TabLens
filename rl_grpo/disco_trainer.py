@@ -1,5 +1,6 @@
 import torch
 from trl import GRPOTrainer
+from trl.trainer.utils import split_pixel_values_by_grid, split_tensor_dict, unsplit_pixel_values_by_grid
 
 from disco_loss import compute_disco_policy_loss
 
@@ -53,6 +54,33 @@ class DiscoGRPOTrainer(GRPOTrainer):
 
         output["advantages"] = torch.stack([binary_rewards, uid.float()], dim=1)
         return output
+
+    def _prepare_inputs(self, generation_batch):
+        # Same as GRPOTrainer._prepare_inputs (trl 0.24.0) but WITHOUT the
+        # shuffle_sequence_dict call. TRL shuffles the whole generation batch
+        # before splitting it into per-accumulation-step micro-batches, which
+        # scatters each prompt's num_generations completions across DIFFERENT
+        # micro-batches. Standard GRPO survives that (advantages are already
+        # group-normalized per row), but DisCO groups completions by uid inside
+        # compute_loss -- it needs every micro-batch to contain the full
+        # generation group, so the shuffle must be skipped.
+        mode = "train" if self.model.training else "eval"
+        if mode == "train":
+            generate_every = self.args.steps_per_generation * self.num_iterations
+            if self._step % generate_every == 0 or self._buffered_inputs is None:
+                generation_batch = self._generate_and_score_completions(generation_batch)
+                generation_batch = split_pixel_values_by_grid(generation_batch)
+                generation_batches = split_tensor_dict(
+                    generation_batch, self.args.steps_per_generation
+                )
+                self._buffered_inputs = [
+                    unsplit_pixel_values_by_grid(batch) for batch in generation_batches
+                ]
+            inputs = self._buffered_inputs[self._step % self.args.steps_per_generation]
+            self._step += 1
+        else:
+            inputs = self._generate_and_score_completions(generation_batch)
+        return inputs
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         if return_outputs:
