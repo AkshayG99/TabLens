@@ -27,7 +27,6 @@ packaging==26.2
 # compile native CUDA extensions; the system CUDA toolkit must match the
 # torch build above or the build fails, see run_disco.sh's comments).
 liger-kernel            # LigerFusedLinearGRPOLoss (rl_grpo/train_grpo.py's use_liger_loss)
-causal-conv1d           # speeds up Qwen3.5's linear-attention layers (24/32 of them); best-effort
 flash-linear-attention  # same; best-effort, not required for correctness
 
 # --- optional ---
