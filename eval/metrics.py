@@ -34,10 +34,24 @@ def f1_weighted(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 def compute_all(y_true: np.ndarray, y_pred: np.ndarray, y_scores: np.ndarray) -> dict:
-    """Compute the full suite of evaluation metrics."""
+    """Compute the full suite of evaluation metrics.
+
+    Guards against a small/unlucky --limit sample containing only one class:
+    roc_auc_score raises outright with a single class in y_true (undefined --
+    there's no negative class to rank against), and without an explicit
+    `labels=[0, 1]`, confusion_matrix/classification_report both infer their
+    label set from whatever classes are actually present, silently
+    collapsing to a 1x1 matrix or a mismatched report instead of the 2x2
+    shape every caller (e.g. the cm[0][0]/cm[0][1]/... indexing in
+    eval/evaluate.py) assumes.
+    """
+    if len(np.unique(y_true)) < 2:
+        roc_auc = float("nan")
+    else:
+        roc_auc = roc_auc_score(y_true, y_scores)
     return {
         "pr_auc": pr_auc(y_true, y_scores),
-        "roc_auc": roc_auc_score(y_true, y_scores),
+        "roc_auc": roc_auc,
         "f2": f2(y_true, y_pred),
         "mcc": mcc(y_true, y_pred),
         "f1": f1_score(y_true, y_pred, zero_division=0),
@@ -46,8 +60,8 @@ def compute_all(y_true: np.ndarray, y_pred: np.ndarray, y_scores: np.ndarray) ->
         "precision": precision_score(y_true, y_pred, zero_division=0),
         "recall": recall_score(y_true, y_pred, zero_division=0),
         "f1": f1_score(y_true, y_pred, zero_division=0),
-        "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
+        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist(),
         "classification_report": classification_report(
-            y_true, y_pred, target_names=["bad", "good"], zero_division=0
+            y_true, y_pred, labels=[0, 1], target_names=["bad", "good"], zero_division=0
         ),
     }

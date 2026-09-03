@@ -1,0 +1,93 @@
+[env] profile auto -> 'a6000' (44.4 GB VRAM)
+[env] torch 2.13.0+cu126 | cuda 12.6 | gpu NVIDIA A40
+[data] 800 train rows from data/processed/german_v2/train.jsonl
+[env] --disco-tau not given; using 10.0 for --disco-score-func logL (paper's recommended pairing)
+[env] --disco set -- using DiscoGRPOTrainer (rl_grpo/disco_trainer.py), use_liger_loss forced off (no DisCO-flavored fused kernel exists)
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] The fast path is not available because one of the required library is not installed. Falling back to torch implementation. To install follow https://github.com/fla-org/flash-linear-attention#installation and https://github.com/Dao-AILab/causal-conv1d
+Loading weights:   0%|          | 0/427 [00:00<?, ?it/s]Loading weights:   0%|          | 1/427 [00:00<02:15,  3.14it/s]Loading weights:   0%|          | 2/427 [00:00<02:23,  2.97it/s]Loading weights:   3%|▎         | 13/427 [00:00<00:17, 24.01it/s]Loading weights:   6%|▌         | 24/427 [00:00<00:09, 42.19it/s]Loading weights:   8%|▊         | 36/427 [00:00<00:06, 59.45it/s]Loading weights:  11%|█         | 45/427 [00:01<00:05, 65.66it/s]Loading weights:  13%|█▎        | 54/427 [00:01<00:05, 69.78it/s]Loading weights:  16%|█▌        | 67/427 [00:01<00:04, 84.03it/s]Loading weights:  19%|█▊        | 80/427 [00:01<00:03, 91.22it/s]Loading weights:  22%|██▏       | 95/427 [00:01<00:03, 104.18it/s]Loading weights:  25%|██▌       | 107/427 [00:01<00:03, 99.78it/s]Loading weights:  30%|███       | 130/427 [00:01<00:02, 131.52it/s]Loading weights:  34%|███▍      | 147/427 [00:01<00:01, 140.45it/s]Loading weights:  38%|███▊      | 162/427 [00:02<00:01, 137.52it/s]Loading weights:  43%|████▎     | 185/427 [00:02<00:01, 160.95it/s]Loading weights:  47%|████▋     | 202/427 [00:02<00:01, 151.36it/s]Loading weights:  52%|█████▏    | 222/427 [00:02<00:01, 163.83it/s]Loading weights:  56%|█████▌    | 239/427 [00:02<00:01, 163.38it/s]Loading weights:  60%|█████▉    | 256/427 [00:02<00:01, 160.20it/s]Loading weights:  65%|██████▍   | 277/427 [00:02<00:00, 173.72it/s]Loading weights:  69%|██████▉   | 295/427 [00:02<00:00, 157.51it/s]Loading weights:  73%|███████▎  | 312/427 [00:02<00:00, 144.36it/s]Loading weights:  78%|███████▊  | 331/427 [00:03<00:00, 149.43it/s]Loading weights:  81%|████████▏ | 347/427 [00:03<00:00, 146.48it/s]Loading weights:  85%|████████▌ | 365/427 [00:03<00:00, 149.98it/s]Loading weights:  90%|█████████ | 386/427 [00:03<00:00, 160.60it/s]Loading weights:  96%|█████████▋| 412/427 [00:03<00:00, 179.53it/s]Loading weights: 100%|██████████| 427/427 [00:03<00:00, 117.49it/s]
+[baseline] pre-train rewards on 4 val-style prompts: [0.05, 0.05, 0.05, 1.5]
+[baseline] sample 0: verdict=reject :: 'Thinking Process:\n\n1.  **Analyze the Request:**\n    *   **Role:** Credit Risk Analyst for a bank.\n    *   **Task:** Review the applicant profile and assess whet'
+[baseline] sample 1: verdict=reject :: 'Thinking Process:\n\n1.  **Analyze the Request:**\n    *   **Role:** Credit Risk Analyst for a bank.\n    *   **Task:** Review the applicant profile and assess whet'
+[baseline] sample 2: verdict=reject :: 'Thinking Process:\n\n1.  **Analyze the Request:**\n    *   **Role:** Credit Risk Analyst for a bank.\n    *   **Task:** Review the applicant profile and assess whet'
+[baseline] sample 3: verdict=reject :: 'Thinking Process:\n\n1.  **Analyze the Request:**\n    *   **Role:** Credit Risk Analyst for a bank.\n    *   **Task:** Review the applicant profile and assess whet'
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'eos_token_id': 248046, 'pad_token_id': 248055}.
+  0%|          | 0/100 [00:00<?, ?it/s][transformers] Passing `generation_config` together with generation-related arguments=({'disable_compile'}) is deprecated and will be removed in future versions. Please pass either a `generation_config` object OR all generation parameters explicitly, but not both.
+[W903 00:14:05.184555927 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 0 while trying to map 20971520 bytes (free: 20119552, total: 47697690624).
+[W903 00:14:13.099779256 CUDACachingAllocator.cpp:508] expandable_segments: memory mapping failed with OOM on device 0 while trying to map 20971520 bytes (free: 20119552, total: 47697690624).
+Traceback (most recent call last):
+  File "/code/TabLens/rl_grpo/train_grpo.py", line 512, in <module>
+    main()
+  File "/code/TabLens/rl_grpo/train_grpo.py", line 503, in main
+    trainer.train()
+  File "/root/tablens-venv/lib/python3.12/site-packages/transformers/trainer.py", line 1427, in train
+    return inner_training_loop(
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/transformers/trainer.py", line 1509, in _inner_training_loop
+    self._run_epoch(
+  File "/root/tablens-venv/lib/python3.12/site-packages/transformers/trainer.py", line 1737, in _run_epoch
+    tr_loss_step = self.training_step(model, inputs, num_items_in_batch)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/transformers/trainer.py", line 1903, in training_step
+    inputs = self._prepare_inputs(inputs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/code/TabLens/rl_grpo/disco_trainer.py", line 91, in _prepare_inputs
+    generation_batch = self._generate_and_score_completions(generation_batch)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/code/TabLens/rl_grpo/disco_trainer.py", line 62, in _generate_and_score_completions
+    old_per_token_logps, _ = self._get_per_token_logps_and_entropies(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/trl/extras/profiling.py", line 98, in wrapper
+    return func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/trl/trainer/grpo_trainer.py", line 837, in _get_per_token_logps_and_entropies
+    logits = model(**model_inputs).logits
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/accelerate/utils/operations.py", line 819, in forward
+    return model_forward(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/accelerate/utils/operations.py", line 807, in __call__
+    return convert_to_fp32(self.model_forward(*args, **kwargs))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/peft/peft_model.py", line 1923, in forward
+    return self.base_model(
+           ^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/peft/tuners/tuners_utils.py", line 311, in forward
+    return self.model.forward(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/transformers/utils/generic.py", line 887, in wrapper
+    output = func(self, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/transformers/models/qwen3_5/modeling_qwen3_5.py", line 1755, in forward
+    logits = self.lm_head(hidden_states[:, slice_indices, :])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1778, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1789, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    return F.linear(input, self.weight, self.bias)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tablens-venv/lib/python3.12/site-packages/torch/_native/registry.py", line 925, in eager_router
+    return _fallback.call_boxed(keyset, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 15.17 GiB. GPU 0 has a total capacity of 44.42 GiB of which 4.24 GiB is free. Process 3834287 has 23.51 GiB memory in use. Process 3838048 has 8.33 GiB memory in use. Process 3838981 has 8.33 GiB memory in use. Of the allocated memory 7.92 GiB is allocated by PyTorch, and 91.00 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+  0%|          | 0/100 [05:12<?, ?it/s]

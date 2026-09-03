@@ -171,9 +171,11 @@ def parse_args():
                    "hyperparameters from different papers that happen to share a name. Not "
                    "validated for this task -- the paper tuned this for math reasoning "
                    "benchmarks, treat it as a starting point.")
-    p.add_argument("--disco-tau", type=float, default=10.0,
+    p.add_argument("--disco-tau", type=float, default=None,
                    help="Temperature for DisCO's soft-max aggregation over negative responses' "
-                   "scores within a group.")
+                   "scores within a group. Default: auto-selected from --disco-score-func "
+                   "(10.0 for logL, 1.0 for Lratio, per the paper) -- pass explicitly to "
+                   "override either default.")
     p.add_argument("--max-completion-length", type=int, default=None,
                    help="Override profile's rollout token budget. Directly trades off against "
                    "both memory (lm_head logprob pass scales with this) and wall-clock "
@@ -217,6 +219,26 @@ class ZeroLossGuard(TrainerCallback):
                 f"completions/clipped_ratio and completions/mean_terminated_length in "
                 f"the logs above; if clipped_ratio is ~1.0, raise max_completion_length "
                 f"or make the model's reasoning shorter via the prompt before retrying."
+            )
+
+
+class DiscoZeroSignalGuard(TrainerCallback):
+    def __init__(self, patience: int = 10):
+        self.patience = patience
+        self._zero_streak = 0
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not state.is_local_process_zero or logs is None or "disco/valid_groups" not in logs:
+            return
+        self._zero_streak = self._zero_streak + 1 if logs["disco/valid_groups"] == 0.0 else 0
+        if self._zero_streak >= self.patience:
+            raise RuntimeError(
+                f"disco/valid_groups has been exactly 0.0 for {self._zero_streak} consecutive "
+                f"logged steps -- no prompt's group of sampled responses has contained both a "
+                f"correct and an incorrect response, so DisCO's pos/neg contrast has had nothing "
+                f"to work with and gradients have been ~zero this whole stretch. Try a larger "
+                f"--num-generations (more samples per prompt = more likely to get a mix), or "
+                f"check whether the reward is degenerate (always/never correct) for this data."
             )
 
 
@@ -300,6 +322,18 @@ def main():
             f"nothing to work with -- this is the exact misconfiguration that gave the original "
             f"verl DisCO attempt zero learning signal. See rl_grpo/disco_loss.py's docstring."
         )
+    if args.disco and args.beta != 0.0:
+        raise SystemExit(
+            f"--disco is incompatible with --beta (got {args.beta}). --beta triggers TRL to "
+            f"compute a reference-model KL term (real memory + compute cost), but "
+            f"DiscoGRPOTrainer.compute_loss() never reads it -- it would be silently wasted, "
+            f"not applied. DisCO has its own KL-bounding mechanism (--disco-delta/--disco-beta); "
+            f"use those instead of --beta."
+        )
+    if args.disco and args.disco_tau is None:
+        args.disco_tau = 10.0 if args.disco_score_func == "logL" else 1.0
+        print(f"[env] --disco-tau not given; using {args.disco_tau} for "
+              f"--disco-score-func {args.disco_score_func} (paper's recommended pairing)")
 
     liger_available = _pkg_installed("liger_kernel") and not args.disco
     if args.disco:
@@ -335,7 +369,6 @@ def main():
         mask_truncated_completions=False,
         beta=args.beta,
         use_liger_loss=liger_available,
-        # Optimization
         learning_rate=prof["lr"],
         lr_scheduler_type="constant_with_warmup",
         warmup_steps=5,
@@ -421,7 +454,7 @@ def main():
             task_type="CAUSAL_LM",
             target_modules="all-linear",
         ),
-        callbacks=[ZeroLossGuard()],
+        callbacks=[DiscoZeroSignalGuard() if args.disco else ZeroLossGuard()],
     )
     if args.disco:
         trainer_kwargs.update(

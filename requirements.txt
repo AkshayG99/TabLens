@@ -20,6 +20,15 @@ tqdm==4.69.0
 PyYAML==6.0.3
 packaging==26.2
 
+# --- fast kernels (liger-loss / --disco, Qwen3.5 linear-attention layers) ---
+# Unpinned, matching scripts/run_sft_a6000.sh's own convention for these same
+# three packages -- fast-moving, no confidently-verifiable exact pin without
+# testing the build on real hardware (causal-conv1d / flash-linear-attention
+# compile native CUDA extensions; the system CUDA toolkit must match the
+# torch build above or the build fails, see run_disco.sh's comments).
+liger-kernel            # LigerFusedLinearGRPOLoss (rl_grpo/train_grpo.py's use_liger_loss)
+flash-linear-attention  # same; best-effort, not required for correctness
+
 # --- optional ---
 # vllm                  # only if training with --use-vllm
 # hf_transfer==0.1.9    # faster HF downloads (set HF_HUB_ENABLE_HF_TRANSFER=1)

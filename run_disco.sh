@@ -24,10 +24,16 @@ esac
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-"$PYTHON" -m pip show causal-conv1d >/dev/null 2>&1 || "$PYTHON" -m pip install causal-conv1d --no-build-isolation || \
-    echo "[run_disco] [warn] causal-conv1d build failed -- continuing without it, this only costs speed"
-"$PYTHON" -m pip show flash-linear-attention >/dev/null 2>&1 || "$PYTHON" -m pip install flash-linear-attention --no-build-isolation || \
-    echo "[run_disco] [warn] flash-linear-attention build failed -- continuing without it, this only costs speed"
+# Checked, not installed here: causal-conv1d/flash-linear-attention/liger-kernel
+# are now in requirements.txt (`pip install -r requirements.txt`) so a launch
+# is reproducible from a pinned manifest instead of whatever pip resolves at
+# runtime. This only warns if they're missing -- causal-conv1d/flash-linear-
+# attention are a speed optimization (Qwen3.5's linear-attention layers), not
+# required for correctness, so a missing one must never block the run.
+for pkg in causal-conv1d flash-linear-attention; do
+    "$PYTHON" -m pip show "$pkg" >/dev/null 2>&1 || \
+        echo "[run_disco] [warn] $pkg not installed -- \`pip install -r requirements.txt\` to fix (costs speed, not correctness, if skipped)"
+done
 
 mkdir -p logs
 LOG="logs/disco_run_$(date +%Y%m%d_%H%M%S).log"

@@ -1,0 +1,2 @@
+[env] profile auto -> 'a6000' (44.4 GB VRAM)
+per-device batch (1) must be divisible by num_generations (2)

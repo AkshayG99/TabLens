@@ -55,14 +55,26 @@ def _last_match(pattern: "re.Pattern", text: str) -> Optional["re.Match"]:
 
 
 def extract_verdict(text: str) -> Optional[str]:
-    """Return 'accept' / 'reject' if the completion contains a clear verdict."""
+    """Return 'accept' / 'reject' if the completion contains a clear verdict.
+
+    Compares each pattern's own last match by TEXT POSITION, not pattern
+    priority -- picking "the first tier with any match" (the previous
+    behavior) meant a restatement in a *lower*-priority tier could never win
+    even if it came later. E.g. "Decision: ACCEPT. On reflection I REJECT
+    this." matched the decision-line tier first and returned 'accept',
+    ignoring the later, controlling "REJECT" bare-word match entirely -- the
+    exact opposite of what "last-match-wins" is supposed to mean.
+    """
     if not text:
         return None
+    best_match = None
     for pattern in _VERDICT_PATTERNS:
         m = _last_match(pattern, text)
-        if m:
-            return "accept" if m.group(1).lower().startswith("accept") else "reject"
-    return None
+        if m is not None and (best_match is None or m.end() > best_match.end()):
+            best_match = m
+    if best_match is None:
+        return None
+    return "accept" if best_match.group(1).lower().startswith("accept") else "reject"
 
 
 def target_to_verdict(target) -> str:
