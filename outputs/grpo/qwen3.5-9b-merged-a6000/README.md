@@ -40,7 +40,7 @@ This model was trained with GRPO, a method introduced in [DeepSeekMath: Pushing 
 - PEFT 0.18.1
 - TRL: 0.24.0
 - Transformers: 5.6.0
-- Pytorch: 2.13.0+cu130
+- Pytorch: 2.13.0+cu126
 - Datasets: 4.0.0
 - Tokenizers: 0.22.2
 
