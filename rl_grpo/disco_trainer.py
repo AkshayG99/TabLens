@@ -1,3 +1,5 @@
+import gc
+
 import torch
 from trl import GRPOTrainer
 from trl.trainer.utils import split_pixel_values_by_grid, split_tensor_dict, unsplit_pixel_values_by_grid
@@ -73,6 +75,14 @@ class DiscoGRPOTrainer(GRPOTrainer):
                 token_type_ids=output.get("token_type_ids"),
             )
         output["old_per_token_logps"] = old_per_token_logps
+        # Reuse in compute_loss to avoid a second torch.cat + duplicate allocation
+        output["input_ids"] = input_ids
+        output["attention_mask"] = attention_mask
+        # Free the transient logits tensor from the old-logprob pass before
+        # compute_loss materialises a fresh one; avoids peak VRAM double-up.
+        del input_ids, attention_mask
+        gc.collect()
+        torch.cuda.empty_cache()
         return output
 
     def _prepare_inputs(self, generation_batch):
@@ -108,8 +118,13 @@ class DiscoGRPOTrainer(GRPOTrainer):
 
         prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
         completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]
-        input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
-        attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
+        # Reuse pre-computed tensors from _generate_and_score_completions to
+        # avoid a redundant torch.cat that would double peak VRAM for these.
+        input_ids = inputs.get("input_ids")
+        attention_mask = inputs.get("attention_mask")
+        if input_ids is None:
+            input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
+            attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
         logits_to_keep = completion_ids.size(1)
 
         per_token_logps, _entropies = self._get_per_token_logps_and_entropies(
