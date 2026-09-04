@@ -56,33 +56,54 @@ class DiscoGRPOTrainer(GRPOTrainer):
 
         output["advantages"] = torch.stack([binary_rewards, uid.float()], dim=1)
 
-        with torch.no_grad():
-            prompt_ids, prompt_mask = output["prompt_ids"], output["prompt_mask"]
-            completion_ids, completion_mask = output["completion_ids"], output["completion_mask"]
-            input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
-            attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
-            old_per_token_logps, _ = self._get_per_token_logps_and_entropies(
-                self.model,
-                input_ids,
-                attention_mask,
-                completion_ids.size(1),
-                compute_entropy=False,
-                pixel_values=output.get("pixel_values"),
-                image_grid_thw=output.get("image_grid_thw"),
-                num_images=output.get("num_images"),
-                pixel_attention_mask=output.get("pixel_attention_mask"),
-                image_sizes=output.get("image_sizes"),
-                token_type_ids=output.get("token_type_ids"),
-            )
-        output["old_per_token_logps"] = old_per_token_logps
-        # Reuse in compute_loss to avoid a second torch.cat + duplicate allocation
-        output["input_ids"] = input_ids
-        output["attention_mask"] = attention_mask
-        # Free the transient logits tensor from the old-logprob pass before
-        # compute_loss materialises a fresh one; avoids peak VRAM double-up.
-        del input_ids, attention_mask
-        gc.collect()
-        torch.cuda.empty_cache()
+        # When num_iterations == 1 and steps_per_generation <= gradient_accumulation_steps,
+        # the policy weights never change between generation and the loss, so
+        # old_per_token_logps == per_token_logps and we can reuse
+        # per_token_logps.detach() in compute_loss (see disco_loss.py). This matches
+        # TRL's own GRPOTrainer._generate_and_score_completions, which skips the
+        # old-logprob pass entirely in that case. Computing it anyway here forces a
+        # SECOND full-vocabulary lm_head logits materialisation (batch x seq x 248k)
+        # on top of the one in compute_loss -- the exact OOM spike that standard GRPO
+        # avoids and that the 40GB A40 cannot fit with long completions.
+        generate_every = self.args.steps_per_generation * self.num_iterations
+        needs_old = (
+            self.args.gradient_accumulation_steps % generate_every != 0
+            or (self.use_vllm and self.vllm_importance_sampling_correction)
+        )
+
+        if needs_old:
+            with torch.no_grad():
+                prompt_ids, prompt_mask = output["prompt_ids"], output["prompt_mask"]
+                completion_ids, completion_mask = output["completion_ids"], output["completion_mask"]
+                input_ids = torch.cat([prompt_ids, completion_ids], dim=1)
+                attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)
+                old_per_token_logps, _ = self._get_per_token_logps_and_entropies(
+                    self.model,
+                    input_ids,
+                    attention_mask,
+                    completion_ids.size(1),
+                    compute_entropy=False,
+                    pixel_values=output.get("pixel_values"),
+                    image_grid_thw=output.get("image_grid_thw"),
+                    num_images=output.get("num_images"),
+                    pixel_attention_mask=output.get("pixel_attention_mask"),
+                    image_sizes=output.get("image_sizes"),
+                    token_type_ids=output.get("token_type_ids"),
+                )
+            output["old_per_token_logps"] = old_per_token_logps
+            # Reuse in compute_loss to avoid a second torch.cat + duplicate allocation
+            output["input_ids"] = input_ids
+            output["attention_mask"] = attention_mask
+            # Free the transient logits tensor from the old-logprob pass before
+            # compute_loss materialises a fresh one; avoids peak VRAM double-up.
+            del input_ids, attention_mask
+            gc.collect()
+            torch.cuda.empty_cache()
+        else:
+            # Leave the key absent so compute_loss falls back to
+            # per_token_logps.detach(), exactly like TRL's standard path.
+            output["old_per_token_logps"] = None
+
         return output
 
     def _prepare_inputs(self, generation_batch):
