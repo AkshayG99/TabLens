@@ -176,6 +176,13 @@ def parse_args():
                    "scores within a group. Default: auto-selected from --disco-score-func "
                    "(10.0 for logL, 1.0 for Lratio, per the paper) -- pass explicitly to "
                    "override either default.")
+    p.add_argument("--disco-logprob-batch-size", type=int, default=1,
+                   help="Chunk size for the log-prob forward pass (TRL's own "
+                   "_get_per_token_logps_and_entropies batch_size arg) -- caps peak memory "
+                   "from materializing full-vocab logits, which --disco can't avoid via "
+                   "liger fusion the way plain GRPO can. Lower = less peak memory, more "
+                   "sequential forward passes (same total FLOPs). Default 1 is maximally "
+                   "conservative; raise it if you have headroom to spare for speed.")
     p.add_argument("--max-completion-length", type=int, default=None,
                    help="Override profile's rollout token budget. Directly trades off against "
                    "both memory (lm_head logprob pass scales with this) and wall-clock "
@@ -462,6 +469,7 @@ def main():
             disco_delta=args.disco_delta,
             disco_beta=args.disco_beta,
             disco_tau=args.disco_tau,
+            disco_logprob_batch_size=args.disco_logprob_batch_size,
         )
     trainer = trainer_cls(**trainer_kwargs)
 
