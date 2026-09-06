@@ -79,7 +79,7 @@ PROFILES = {
         # batch x seq_len x 248k-vocab logits, i.e. cost scales ~linearly
         # with this value. Run the smoke test first; drop back toward 512 if
         # it OOMs before a real run.
-        max_completion_length=1024,
+        max_completion_length=512,
         lr=1e-5,
         optim="adamw_torch_fused",
     ),
