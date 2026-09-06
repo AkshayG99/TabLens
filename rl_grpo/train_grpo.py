@@ -69,17 +69,14 @@ PROFILES = {
         per_device_batch=16,   # completions per fwd/bwd; must be a multiple of num_generations
         grad_accum=2,          # -> effective batch 32 completions = 4 prompts x 8 gens
         max_prompt_length=1024,
-        # Was 512: checkpoint-100's own trainer_state.json shows
-        # completions/clipped_ratio == 1.0 and mean_terminated_length == 0.0
-        # on every single logged step -- literally no rollout ever reached a
-        # natural stop at 512, so (with mask_truncated_completions=True below)
-        # ~every completion was masked out of the loss the whole run. SFT
-        # completions average ~1100-1350 tokens before concluding, so bump
-        # toward that. Watch VRAM: the lm_head logprob pass materializes
-        # batch x seq_len x 248k-vocab logits, i.e. cost scales ~linearly
-        # with this value. Run the smoke test first; drop back toward 512 if
-        # it OOMs before a real run.
-        max_completion_length=512,
+        # checkpoint-100's trainer_state.json showed clipped_ratio == 1.0 and
+        # mean_terminated_length == 0.0 on every step at 512 -- no rollout
+        # ever finished naturally. SFT completions average ~1100-1350 tokens,
+        # so back up near that. Was cut to 512 for a CUDA OOM with 16 gens,
+        # but that OOM was the logprob passes materializing full-vocab logits
+        # at full batch size, not completion length -- --disco-logprob-batch-size
+        # now caps that directly, so this doesn't need to stay small too.
+        max_completion_length=1024,
         lr=1e-5,
         optim="adamw_torch_fused",
     ),
